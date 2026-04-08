@@ -1,11 +1,11 @@
-// Copyright (c) 2026 Nikita Hmelnitkii. MIT License — see LICENSE.
+// Copyright (c) 2026 Nikita Hmelnitkii. MIT License - see LICENSE.
 //
-// Fixup.h — linker fixup/relocation descriptor
+// Fixup.h - linker fixup/relocation descriptor
 //
 // ld-prime (ld-1115.7.3, ld-1230.1): 16 bytes, layout stable across versions.
 // ld64 classic (ld64-820.1): 16 bytes, completely different field arrangement.
 //
-// All offsets verified against arm64 disassembly — see tests/ for validation.
+// All offsets verified against arm64 disassembly - see tests/ for validation.
 
 #ifndef LD_FIXUP_H
 #define LD_FIXUP_H
@@ -15,7 +15,7 @@
 
 namespace ld {
 
-// ld-prime fixup — overlaid directly on the linker's in-memory fixup arrays.
+// ld-prime fixup - overlaid directly on the linker's in-memory fixup arrays.
 struct Fixup {
 
     uint32_t offsetInAtom;  // +0x00
@@ -23,7 +23,7 @@ struct Fixup {
     uint32_t kindAddend;    // +0x08: kind[9:0] | hasLargeAddend[10] | addend[31:11]
     uint32_t extras;        // +0x0C: arm64e auth data or extra addend
 
-    // kind — 10-bit fixup type
+    // kind - 10-bit fixup type
 
     static constexpr uint32_t kKindBits = 10;
     static constexpr uint32_t kKindMask = (1u << kKindBits) - 1;
@@ -37,7 +37,7 @@ struct Fixup {
     enum Kind : uint16_t {
         // setting kind to kindNone makes all downstream code skip the fixup:
         // buildChainedFixups won't collect it, applyFixup is a no-op.
-        // IMPORTANT: applyFixup errors on kindNone in final output — set it
+        // IMPORTANT: applyFixup errors on kindNone in final output - set it
         // AFTER applyFixup writes the pointer, BEFORE buildChainedFixups runs.
         kindNone          = 0x000,
 
@@ -49,7 +49,7 @@ struct Fixup {
         kindArm64eAuth2   = 0x182,  // ld-1230.1+
     };
 
-    // binding — 2-bit target resolution type
+    // binding - 2-bit target resolution type
 
     static constexpr uint32_t kBindingShift = 30;
     static constexpr uint32_t kBindingBits  = 2;
@@ -61,19 +61,19 @@ struct Fixup {
         return static_cast<uint8_t>((targetRef >> kBindingShift) & kBindingMask);
     }
 
-    // target index — bits [23:0], valid when binding == 0
+    // target index - bits [23:0], valid when binding == 0
 
     static constexpr uint32_t kTargetIndexMask = 0x00FFFFFF;
 
     uint32_t targetIndex() const { return targetRef & kTargetIndexMask; }
 
-    // pass index — bits [29:24], valid when binding != 0
+    // pass index - bits [29:24], valid when binding != 0
 
     uint8_t passIndex() const {
         return static_cast<uint8_t>((targetRef >> 24) & 0x3F);
     }
 
-    // addend — signed 21-bit, or large-addend table index when bit 10 is set
+    // addend - signed 21-bit, or large-addend table index when bit 10 is set
 
     static constexpr uint32_t kAddendShift    = 11;
     static constexpr uint32_t kLargeAddendBit = 10;
@@ -81,18 +81,18 @@ struct Fixup {
     bool hasLargeAddend() const { return (kindAddend >> kLargeAddendBit) & 1; }
 
     int32_t addend() const {
-        // arithmetic right shift — implementation-defined in C++ but
+        // arithmetic right shift - implementation-defined in C++ but
         // guaranteed on all Apple targets. matches sbfx in the linker.
         return static_cast<int32_t>(kindAddend) >> kAddendShift;
     }
 
-    // extras — extra addend or arm64e auth data
+    // extras - extra addend or arm64e auth data
 
     int32_t  extraAddend()       const { return static_cast<int32_t>(extras); }
     uint16_t authDiscriminator() const { return static_cast<uint16_t>(extras >> 16); }
     uint8_t  authInfoByte()      const { return static_cast<uint8_t>(extras >> 24); }
 
-    // pointer-kind classification — true for kinds that emit chained fixup entries.
+    // pointer-kind classification - true for kinds that emit chained fixup entries.
     // range [2, 0x0E] derived from: sub w9, w8, #2; cmp w9, #0xC; b.hi skip
     bool isPointerKind() const {
         uint16_t k = kind();
@@ -107,7 +107,7 @@ static_assert(offsetof(Fixup, targetRef)    == 0x04, "");
 static_assert(offsetof(Fixup, kindAddend)   == 0x08, "");
 static_assert(offsetof(Fixup, extras)       == 0x0C, "");
 
-// ld64 classic fixup — completely different layout from ld-prime.
+// ld64 classic fixup - completely different layout from ld-prime.
 // 8-bit kind, 3-bit binding, 8-byte union at +0x00.
 
 namespace classic {
@@ -148,7 +148,7 @@ struct Fixup {
 
     enum Kind : uint8_t {
         kindNone = 0,
-        // ~40 more values exist in ld64 — add as needed.
+        // ~40 more values exist in ld64 - add as needed.
     };
 };
 

@@ -1,6 +1,6 @@
-// Copyright (c) 2026 Nikita Hmelnitkii. MIT License — see LICENSE.
+// Copyright (c) 2026 Nikita Hmelnitkii. MIT License - see LICENSE.
 //
-// Layout.h — navigation from LinkeditBuilder::build() to atoms
+// Layout.h - navigation from LinkeditBuilder::build() to atoms
 //
 // Navigation chain:
 //   build(Error*, LinkeditBuilder*, Linkedit*)
@@ -28,7 +28,7 @@
 
 namespace ld {
 
-// version-dependent offsets — call layoutConstantsFor() once and cache.
+// version-dependent offsets - call layoutConstantsFor() once and cache.
 
 struct LayoutConstants {
     bool   valid;
@@ -50,7 +50,7 @@ inline LayoutConstants layoutConstantsFor(const LinkerVersion &v) {
     return {true, 0x50, 0x38, 0x40, 0x1B8, 0x3190, 0x3198};
 }
 
-// section field offsets — stable across both ld-prime versions (stride 0x88)
+// section field offsets - stable across both ld-prime versions (stride 0x88)
 
 namespace section {
     inline constexpr size_t kStride      = 0x88;
@@ -74,7 +74,7 @@ namespace section {
     inline constexpr uint8_t kTypeStub     = 0x13;
 }
 
-// SectionRO_1 — inline metadata from .o files
+// SectionRO_1 - inline metadata from .o files
 
 namespace SectionRO {
     inline constexpr size_t kContentType = 0x00;
@@ -83,14 +83,14 @@ namespace SectionRO {
     inline constexpr size_t kSectName    = 0x1A;  // char[16]
 }
 
-// segment field offsets — name at +0x00/+0x08 stable, sections version-dependent
+// segment field offsets - name at +0x00/+0x08 stable, sections version-dependent
 
 namespace segment {
     inline constexpr size_t kNamePtr = 0x00;
     inline constexpr size_t kNameLen = 0x08;
 }
 
-// LayoutExecutable field offsets — segments vector at +0x120 stable
+// LayoutExecutable field offsets - segments vector at +0x120 stable
 
 namespace layout {
     inline constexpr size_t kOptions      = 0x08;
@@ -109,7 +109,7 @@ namespace layout {
 namespace builder {
     inline constexpr size_t kOptions      = 0x00;
     inline constexpr size_t kArch         = 0x08;
-    inline constexpr size_t kLayout       = 0x10;  // LayoutExecutable* — stable
+    inline constexpr size_t kLayout       = 0x10;  // LayoutExecutable* - stable
     inline constexpr size_t kAtomGroups   = 0x18;
     inline constexpr size_t kPlacement    = 0x20;
     inline constexpr size_t kSegmentsPtr  = 0x48;
@@ -118,7 +118,7 @@ namespace builder {
     inline constexpr size_t kIndirectCount = 0x60;
 }
 
-// AtomPlacement — pointed to by Atom+0x10
+// AtomPlacement - pointed to by Atom+0x10
 
 namespace placement {
     inline constexpr size_t kOffset       = 0x00;
@@ -179,7 +179,7 @@ inline bool segmentNameMatches(const void *seg, const char *name, size_t nameLen
     return memcmp(segmentName(seg), name, nameLen) == 0;
 }
 
-// fast path for 6-char names (__DATA, __TEXT) — avoids memcmp
+// fast path for 6-char names (__DATA, __TEXT) - avoids memcmp
 inline bool segmentNameIs(const void *seg, const char (&name)[7]) {
     const char *n = segmentName(seg);
     if (!n) return false;
@@ -238,7 +238,7 @@ inline const void *findSection(const void *layoutExe,
                        sectName, strlen(sectName));
 }
 
-// validation — call once at hook entry before navigating.
+// validation - call once at hook entry before navigating.
 // returns false if the pointers look wrong (version mismatch, etc.).
 inline bool validateBuilder(const void *bldr, const LayoutConstants &lc) {
     if (!bldr || !lc.valid) return false;

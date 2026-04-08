@@ -1,6 +1,6 @@
-// Copyright (c) 2026 Nikita Hmelnitkii. MIT License — see LICENSE.
+// Copyright (c) 2026 Nikita Hmelnitkii. MIT License - see LICENSE.
 //
-// Version.h — Apple linker version detection
+// Version.h - Apple linker version detection
 //
 // Detects whether the running linker is ld-prime (ld-1100+) or classic
 // ld64, and which version, by scanning for the embedded PROJECT string.
@@ -155,7 +155,7 @@ inline LinkerVersion detectVersion() {
                 const auto *seg =
                     reinterpret_cast<const struct segment_command_64 *>(lc);
 
-                // only search __TEXT and __DATA — skip __LINKEDIT etc.
+                // only search __TEXT and __DATA - skip __LINKEDIT etc.
                 if (strncmp(seg->segname, "__TEXT", 6) != 0
                     && strncmp(seg->segname, "__DATA", 6) != 0) {
                     lc = reinterpret_cast<const struct load_command *>(

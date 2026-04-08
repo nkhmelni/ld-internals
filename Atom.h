@@ -1,12 +1,12 @@
-// Copyright (c) 2026 Nikita Hmelnitkii. MIT License — see LICENSE.
+// Copyright (c) 2026 Nikita Hmelnitkii. MIT License - see LICENSE.
 //
-// Atom.h — ld::Atom class layout and BIND/REBASE classification
+// Atom.h - ld::Atom class layout and BIND/REBASE classification
 //
-// The Atom is the fundamental unit in Apple's linker — every symbol, literal,
+// The Atom is the fundamental unit in Apple's linker - every symbol, literal,
 // stub, etc. is an Atom. Three concrete subclasses in ld-prime:
-//   Atom_1 (0x30 bytes) — deserialized from .o files
-//   Atom_2              — variant of Atom_1
-//   DynamicAtom (0x58)  — linker-generated atoms
+//   Atom_1 (0x30 bytes) - deserialized from .o files
+//   Atom_2              - variant of Atom_1
+//   DynamicAtom (0x58)  - linker-generated atoms
 //
 // Vtable slots 0-11 (+0x00 through +0x58) are stable across both known
 // ld-prime versions (ld-1115.7.3, ld-1230.1). Divergence starts at slot 15.
@@ -22,7 +22,7 @@
 
 namespace ld {
 
-// memory access primitives — all struct access goes through these.
+// memory access primitives - all struct access goes through these.
 
 inline uint8_t readU8(const void *base, size_t off) {
     return static_cast<const uint8_t *>(base)[off];
@@ -46,7 +46,7 @@ inline const void *readPtr(const void *base, size_t off) {
     return v;
 }
 
-// atom kind — the byte at Atom+0x08 that determines BIND vs REBASE.
+// atom kind - the byte at Atom+0x08 that determines BIND vs REBASE.
 // derived from makeBindTarget's bitmask 0x103F: bits set at positions
 // 0-5 and 12 are regular (REBASE). everything else <= 18 is BIND.
 
@@ -68,7 +68,7 @@ namespace AtomKind {
     inline constexpr uint8_t kTentative1   = 0x0E;
     inline constexpr uint8_t kTentative2   = 0x0F;
     inline constexpr uint8_t kTentative3   = 0x10;
-    inline constexpr uint8_t kProxy        = 0x12;  // dylib import — definitive BIND
+    inline constexpr uint8_t kProxy        = 0x12;  // dylib import - definitive BIND
     inline constexpr uint8_t kStub         = 0x13;  // stub/thunk
 
     constexpr bool isBind(uint8_t kind) {
@@ -108,7 +108,7 @@ inline bool atomIsProxy(AtomPtr a)  { return AtomKind::isProxy(atomKind(a)); }
 inline bool atomIsBind(AtomPtr a)   { return AtomKind::isBind(atomKind(a)); }
 inline bool atomIsRebase(AtomPtr a) { return AtomKind::isRebase(atomKind(a)); }
 
-// vtable dispatch — calls into linker code
+// vtable dispatch - calls into linker code
 
 template <typename R>
 inline R atomVCall(AtomPtr a, size_t slot) {
@@ -140,7 +140,7 @@ inline FixupSpan atomFixups(AtomPtr a) {
     return fn(a);
 }
 
-// vtable slot offsets (ld-prime) — slots 0-11 stable across versions
+// vtable slot offsets (ld-prime) - slots 0-11 stable across versions
 
 namespace vtable {
     inline constexpr size_t kFile          = 0x00;
@@ -161,7 +161,7 @@ namespace vtable {
     // slots 15+ diverge between ld versions
 }
 
-// atom base class field offsets — stable across ld-prime versions
+// atom base class field offsets - stable across ld-prime versions
 
 namespace atom {
     inline constexpr size_t kVtable      = 0x00;
@@ -192,7 +192,7 @@ namespace atom {
     inline constexpr size_t kDynamic_Size       = 0x58;
 }
 
-// AtomRO_1 — read-only serialized data for Atom_1 (pointed to by Atom_1+0x20)
+// AtomRO_1 - read-only serialized data for Atom_1 (pointed to by Atom_1+0x20)
 
 namespace AtomRO {
     inline constexpr size_t kOrdinal       = 0x00;
@@ -206,14 +206,14 @@ namespace AtomRO {
     inline constexpr size_t kAlignHigh     = 0x1E;
 }
 
-// DynamicAtomFile fixup pool offset — differs between ld versions
+// DynamicAtomFile fixup pool offset - differs between ld versions
 
 namespace DynamicAtomFile {
     inline constexpr size_t kFixupPool_1115 = 0x1B8;
     inline constexpr size_t kFixupPool_1230 = 0x1F8;
 }
 
-// ld64 classic vtable — different slot ordering, fixupsBegin/End iterators
+// ld64 classic vtable - different slot ordering, fixupsBegin/End iterators
 
 namespace classic {
 namespace vtable {
@@ -223,7 +223,7 @@ namespace vtable {
     inline constexpr size_t kObjectAddr  = 0x18;
     inline constexpr size_t kSize        = 0x20;
     inline constexpr size_t kCopyContent = 0x28;
-    // fixupsBegin/End are near the middle — not stable across ld64 versions
+    // fixupsBegin/End are near the middle - not stable across ld64 versions
 }
 }
 
