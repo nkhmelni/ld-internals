@@ -4,7 +4,7 @@ Reverse-engineered internal struct layouts for Apple's linkers. Assumes usage in
 
 ## Validated versions
 
-Tested and confirmed against these binaries — other versions likely work as-is, since core layouts are stable across ld-prime releases.
+Tested and confirmed against these binaries. Other versions likely work as-is, since core layouts are stable across ld-prime releases.
 
 - **ld-prime** (closed-source): ld-1115.7.3 (Xcode 16.1), ld-1230.1 (Xcode 26)
 - **ld64** (classic): ld64-820.1 (Xcode 14.2)
