@@ -2,7 +2,7 @@
 //
 // ld.h - reverse-engineered layouts for Apple's ld-prime and ld64 linkers
 //
-// Supports ld-prime (ld-1115.7.3, ld-1221.4, ld-1230.1) and ld64 (ld64-820.1).
+// Supports ld-prime (ld-1115.7.3, ld-1221.4, ld-1230.1, ld-1266.8) and ld64 (ld64-820.1).
 // All offsets derived from arm64 disassembly and validated against real binaries.
 //
 // Example - reading atoms and fixups from within the linker process:

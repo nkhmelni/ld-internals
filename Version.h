@@ -51,6 +51,7 @@ namespace version {
     inline constexpr LinkerVersion Prime_1115 = {Family::Prime, 1115, 7, 3};
     inline constexpr LinkerVersion Prime_1221 = {Family::Prime, 1221, 4, 0};
     inline constexpr LinkerVersion Prime_1230 = {Family::Prime, 1230, 1, 0};
+    inline constexpr LinkerVersion Prime_1266 = {Family::Prime, 1266, 8, 0};
     inline constexpr LinkerVersion ld64_820   = {Family::Classic, 820, 1, 0};
 }
 
@@ -93,7 +94,7 @@ inline LinkerVersion findProjectString(const uint8_t *start, const uint8_t *end)
     static const char needle[] = "PROJECT:ld";
     constexpr size_t nlen = sizeof(needle) - 1;
 
-    for (const uint8_t *p = start; p + nlen < end; ++p) {
+    for (const uint8_t *p = start; p + nlen <= end; ++p) {
         if (memcmp(p, needle, nlen) != 0) continue;
 
         const char *proj = reinterpret_cast<const char *>(p) + nlen;
@@ -152,6 +153,7 @@ inline LinkerVersion detectVersion() {
         const struct load_command *lc =
             reinterpret_cast<const struct load_command *>(cmds);
         for (uint32_t j = 0; j < mh->ncmds; ++j) {
+            if (lc->cmdsize < sizeof(struct load_command)) break;
             if (lc->cmd == LC_SEGMENT_64) {
                 const auto *seg =
                     reinterpret_cast<const struct segment_command_64 *>(lc);

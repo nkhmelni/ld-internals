@@ -1,20 +1,7 @@
 // Copyright (c) 2026 Nikita Hmelnitkii. MIT License - see LICENSE.
 //
-// Layout.h - navigation from LinkeditBuilder::build() to atoms
-//
-// Navigation chain:
-//   build(Error*, LinkeditBuilder*, Linkedit*)
-//     -> LinkeditBuilder+0x10     -> LayoutExecutable*
-//       -> Layout+0x120/0x128     -> segments begin/end
-//         -> Segment+0x38 or 0x40 -> sections begin/end
-//           -> Section+0x60/0x68  -> atoms begin/end
-//             -> Atom vtable+0x58 -> fixups()
-//
-// Version differences:
-//   SegmentLayout stride:       0x50 (ld-1115) vs 0x58 (ld-1230)
-//   SegmentLayout sections:     +0x38/+0x40 (ld-1115) vs +0x40/+0x48 (ld-1230)
-//   SectionLayout:              0x88 (both), atoms at +0x60/+0x68 (both)
-//   LayoutExecutable segments:  +0x120/+0x128 (both)
+// Layout.h - Builder → Layout → Segments → Sections → Atoms → Fixups.
+// Segment stride: 0x50 (ld-1115), 0x58 (ld-1221+). Sections: 0x88. Atoms: +0x60/+0x68.
 
 #ifndef LD_LAYOUT_H
 #define LD_LAYOUT_H
@@ -32,27 +19,130 @@ namespace ld {
 
 struct LayoutConstants {
     bool   valid;
+    // segment layout
     size_t segmentStride;
     size_t segSectionsBegin;
     size_t segSectionsEnd;
+    // DynamicAtomFile fields
     size_t dynamicFixupPool;
+    size_t dynamicFileDylibFileInfo;
+    size_t dynamicFileIsLTO;
+    size_t dynamicFileLinkerOptions;
+    size_t dynamicFileAltFileInfos;
+    size_t dynamicFileLargeAddends;
+    // layout indirects
     size_t layoutIndirectBegin;
     size_t layoutIndirectEnd;
-    size_t passFilesBegin;       // consolidator + offset
+    // consolidator passFiles
+    size_t passFilesBegin;
     size_t passFilesEnd;
+    // AtomFile vtable (shifted +0x08 in ld-1221 due to srcPath insertion)
+    size_t fileVtableSrcPath;          // 0 in ld-1115 (not present)
+    size_t fileVtableDylibFileInfo;
+    size_t fileVtableDependencyInfos;
+    size_t fileVtableLinkerOptions;
+    size_t fileVtableLargeAddends;
+    size_t fileVtableIsLTO;
+    size_t fileVtableIsDynamic;
+    size_t fileVtableAtomLOHs;         // 0 in ld-1115 (not present)
+    size_t fileVtableFileLOHs;         // 0 in ld-1115 (not present)
+    // AtomFile_1 fields (shifted +0x10 in ld-1221)
+    size_t atomFile1DylibFileInfo;
+    size_t atomFile1FixupPool;
+    size_t atomFile1LargeAddends;
+    size_t atomFile1LinkerOptions;
+    size_t atomFile1DependencyInfos;
 };
 
 // returns {.valid=false} for unrecognized or classic (ld64) versions.
 inline LayoutConstants layoutConstantsFor(const LinkerVersion &v) {
-    if (!v.isPrime()) return {false, 0, 0, 0, 0, 0, 0, 0, 0};
+    LayoutConstants lc = {};
+    if (!v.isPrime()) return lc;
+    lc.valid = true;
 
-    if (v.major >= 1200) {
-        return {true, 0x58, 0x40, 0x48, 0x1F8, 0x3108, 0x3110, 0x878, 0x880};
+    if (v.major >= 1266) {
+        // ld-1266+: DynamicAtomFile fields shifted further
+        lc.segmentStride = 0x58;
+        lc.segSectionsBegin = 0x40; lc.segSectionsEnd = 0x48;
+        lc.dynamicFixupPool = 0x218;
+        lc.dynamicFileDylibFileInfo = 0x140;
+        lc.dynamicFileIsLTO = 0x120;
+        lc.dynamicFileLinkerOptions = 0x148;
+        lc.dynamicFileAltFileInfos = 0x180;
+        lc.dynamicFileLargeAddends = 0x230;
+        lc.layoutIndirectBegin = 0x3108; lc.layoutIndirectEnd = 0x3110;
+        lc.passFilesBegin = 0x878; lc.passFilesEnd = 0x880;
+        lc.fileVtableSrcPath = 0x08;
+        lc.fileVtableDylibFileInfo = 0x28;
+        lc.fileVtableDependencyInfos = 0x30;
+        lc.fileVtableLinkerOptions = 0x38;
+        lc.fileVtableLargeAddends = 0x40;
+        lc.fileVtableIsLTO = 0x48;
+        lc.fileVtableIsDynamic = 0x18;
+        lc.fileVtableAtomLOHs = 0x68;
+        lc.fileVtableFileLOHs = 0x70;
+        lc.atomFile1DylibFileInfo = 0x98;
+        lc.atomFile1FixupPool = 0xA0;
+        lc.atomFile1LargeAddends = 0xB0;
+        lc.atomFile1LinkerOptions = 0xE0;
+        lc.atomFile1DependencyInfos = 0xF8;
+    } else if (v.major >= 1200) {
+        // ld-1221/1230: srcPath() inserted at AtomFile vtable slot 1
+        lc.segmentStride = 0x58;
+        lc.segSectionsBegin = 0x40; lc.segSectionsEnd = 0x48;
+        lc.dynamicFixupPool = 0x1F8;
+        lc.dynamicFileDylibFileInfo = 0x138;
+        lc.dynamicFileIsLTO = 0x118;
+        lc.dynamicFileLinkerOptions = 0x140;
+        lc.dynamicFileAltFileInfos = 0x178;
+        lc.dynamicFileLargeAddends = 0x210;
+        lc.layoutIndirectBegin = 0x3108; lc.layoutIndirectEnd = 0x3110;
+        lc.passFilesBegin = 0x878; lc.passFilesEnd = 0x880;
+        lc.fileVtableSrcPath = 0x08;
+        lc.fileVtableDylibFileInfo = 0x28;
+        lc.fileVtableDependencyInfos = 0x30;
+        lc.fileVtableLinkerOptions = 0x38;
+        lc.fileVtableLargeAddends = 0x40;
+        lc.fileVtableIsLTO = 0x48;
+        lc.fileVtableIsDynamic = 0x18;
+        lc.fileVtableAtomLOHs = 0x68;
+        lc.fileVtableFileLOHs = 0x70;
+        lc.atomFile1DylibFileInfo = 0x98;
+        lc.atomFile1FixupPool = 0xA0;
+        lc.atomFile1LargeAddends = 0xB0;
+        lc.atomFile1LinkerOptions = 0xE0;
+        lc.atomFile1DependencyInfos = 0xF8;
+    } else {
+        // ld-1115
+        lc.segmentStride = 0x50;
+        lc.segSectionsBegin = 0x38; lc.segSectionsEnd = 0x40;
+        lc.dynamicFixupPool = 0x1B8;
+        lc.dynamicFileDylibFileInfo = 0x128;
+        lc.dynamicFileIsLTO = 0x108;
+        lc.dynamicFileLinkerOptions = 0x130;
+        lc.dynamicFileAltFileInfos = 0x168;
+        lc.dynamicFileLargeAddends = 0x1D0;
+        lc.layoutIndirectBegin = 0x3190; lc.layoutIndirectEnd = 0x3198;
+        lc.passFilesBegin = 0x788; lc.passFilesEnd = 0x790;
+        lc.fileVtableSrcPath = 0;  // not present in ld-1115
+        lc.fileVtableDylibFileInfo = 0x20;
+        lc.fileVtableDependencyInfos = 0x28;
+        lc.fileVtableLinkerOptions = 0x30;
+        lc.fileVtableLargeAddends = 0x38;
+        lc.fileVtableIsLTO = 0x40;
+        lc.fileVtableIsDynamic = 0x10;
+        lc.fileVtableAtomLOHs = 0;   // not present in ld-1115
+        lc.fileVtableFileLOHs = 0;   // not present in ld-1115
+        lc.atomFile1DylibFileInfo = 0x88;
+        lc.atomFile1FixupPool = 0x90;
+        lc.atomFile1LargeAddends = 0xA0;
+        lc.atomFile1LinkerOptions = 0xD0;
+        lc.atomFile1DependencyInfos = 0xE8;
     }
-    return {true, 0x50, 0x38, 0x40, 0x1B8, 0x3190, 0x3198, 0x788, 0x790};
+    return lc;
 }
 
-// section field offsets - stable across both ld-prime versions (stride 0x88)
+// section fields (stride 0x88, stable)
 
 namespace section {
     inline constexpr size_t kStride      = 0x88;
@@ -61,7 +151,7 @@ namespace section {
     inline constexpr size_t kSegNamePtr  = 0x10;
     inline constexpr size_t kSegNameLen  = 0x18;
     inline constexpr size_t kContentType = 0x2C;
-    inline constexpr size_t kAlignment   = 0x30;
+    inline constexpr size_t kAlignment   = 0x30;  // u16: alignment power (ldrh)
     inline constexpr size_t kAddress     = 0x38;
     inline constexpr size_t kSize        = 0x40;
     inline constexpr size_t kFileOffset  = 0x48;
@@ -70,29 +160,39 @@ namespace section {
     inline constexpr size_t kSectionRO   = 0x78;
     inline constexpr size_t kSectionIdx  = 0x80;
 
-    inline constexpr uint8_t kTypeProxy    = 0x12;
-    inline constexpr uint8_t kTypeAlias    = 0x0C;
-    inline constexpr uint8_t kTypeZerofill = 0x01;
-    inline constexpr uint8_t kTypeStub     = 0x13;
+    // NOTE: the contentType field at +0x2C stores Atom ContentType values
+    // (ld::ContentType enum), NOT AtomKind values. Use ContentType::kGot,
+    // ContentType::kStub, etc. for section type comparisons.
 }
 
-// SectionRO_1 - inline metadata from .o files
+// SectionRO_1 - inline metadata from .o files (0x2C bytes)
 
 namespace SectionRO {
-    inline constexpr size_t kContentType = 0x00;
-    inline constexpr size_t kAlignment   = 0x04;
-    inline constexpr size_t kSegName     = 0x08;  // char[16]
-    inline constexpr size_t kSectName    = 0x1A;  // char[16]
+    inline constexpr size_t kAlignment   = 0x00;  // u32: alignment power
+    inline constexpr size_t kContentType = 0x04;  // u32: ContentType enum value
+    inline constexpr size_t kSegName     = 0x08;  // char[18]
+    inline constexpr size_t kSectName    = 0x1A;  // char[18]
+    inline constexpr size_t kSize        = 0x2C;
 }
 
-// segment field offsets - name at +0x00/+0x08 stable, sections version-dependent
+// segment field offsets (ld-1115 stride 0x50, ld-1221+ stride 0x58).
+// name + vm fields stable; sections vector is version-dependent.
 
 namespace segment {
-    inline constexpr size_t kNamePtr = 0x00;
-    inline constexpr size_t kNameLen = 0x08;
+    inline constexpr size_t kNamePtr      = 0x00;
+    inline constexpr size_t kNameLen      = 0x08;
+    inline constexpr size_t kVMAddr       = 0x10;  // uint64: virtual memory address
+    inline constexpr size_t kVMSize       = 0x18;  // uint64: aligned virtual memory size
+    inline constexpr size_t kFileOff      = 0x20;  // uint32: file offset
+    inline constexpr size_t kFileSize     = 0x24;  // uint32: file size
+    inline constexpr size_t kInitProt     = 0x2C;  // uint8: VM_PROT (e.g. 5=RX, 3=RW)
+    inline constexpr size_t kMaxProt      = 0x2D;  // uint8: VM_PROT
+    inline constexpr size_t kSegmentOrder = 0x30;  // u32: sort key
+    inline constexpr size_t kFixedAddr   = 0x38;  // u8: fixed-address flag (ld-1221+ only)
+    // sections vector at +0x38/+0x40 (ld-1115) or +0x40/+0x48 (ld-1221+)
 }
 
-// LayoutExecutable field offsets - segments vector at +0x120 stable
+// LayoutExecutable fields
 
 namespace layout {
     inline constexpr size_t kOptions      = 0x08;
@@ -103,10 +203,7 @@ namespace layout {
     inline constexpr size_t kArch         = 0x188;
 }
 
-// LinkeditBuilder::build() calling convention (ARM64):
-//   x0 = mach_o::Error*  (hidden struct return)
-//   x1 = LinkeditBuilder* (this)
-//   x2 = Linkedit*        (heap-allocated output)
+// LinkeditBuilder fields
 
 namespace builder {
     inline constexpr size_t kOptions      = 0x00;
@@ -120,7 +217,7 @@ namespace builder {
     inline constexpr size_t kIndirectCount = 0x60;
 }
 
-// AtomPlacement - pointed to by Atom+0x10
+// AtomPlacement (Atom+0x10)
 
 namespace placement {
     inline constexpr size_t kOffset       = 0x00;
@@ -165,12 +262,50 @@ inline const char *sectionSegName(const void *sec) {
     return static_cast<const char *>(readPtr(sec, section::kSegNamePtr));
 }
 
+inline uint8_t sectionContentType(const void *sec) {
+    return readU8(sec, section::kContentType);
+}
+
+inline uint64_t sectionAddress(const void *sec) {
+    return readU64(sec, section::kAddress);
+}
+
+inline uint64_t sectionSize(const void *sec) {
+    return readU64(sec, section::kSize);
+}
+
 inline AtomPtr const *sectionAtomsBegin(const void *sec) {
     return static_cast<AtomPtr const *>(readPtr(sec, section::kAtomsBegin));
 }
 
 inline AtomPtr const *sectionAtomsEnd(const void *sec) {
     return static_cast<AtomPtr const *>(readPtr(sec, section::kAtomsEnd));
+}
+
+// segment field accessors
+
+inline uint64_t segmentVMAddr(const void *seg) {
+    return readU64(seg, segment::kVMAddr);
+}
+
+inline uint64_t segmentVMSize(const void *seg) {
+    return readU64(seg, segment::kVMSize);
+}
+
+inline uint32_t segmentFileOff(const void *seg) {
+    return readU32(seg, segment::kFileOff);
+}
+
+inline uint32_t segmentFileSize(const void *seg) {
+    return readU32(seg, segment::kFileSize);
+}
+
+inline uint8_t segmentInitProt(const void *seg) {
+    return readU8(seg, segment::kInitProt);
+}
+
+inline uint8_t segmentMaxProt(const void *seg) {
+    return readU8(seg, segment::kMaxProt);
 }
 
 // segment name matching
