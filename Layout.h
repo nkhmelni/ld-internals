@@ -4,11 +4,11 @@
 //
 // Navigation chain:
 //   build(Error*, LinkeditBuilder*, Linkedit*)
-//     → LinkeditBuilder+0x10     → LayoutExecutable*
-//       → Layout+0x120/0x128     → segments begin/end
-//         → Segment+0x38 or 0x40 → sections begin/end
-//           → Section+0x60/0x68  → atoms begin/end
-//             → Atom vtable+0x58 → fixups()
+//     -> LinkeditBuilder+0x10     -> LayoutExecutable*
+//       -> Layout+0x120/0x128     -> segments begin/end
+//         -> Segment+0x38 or 0x40 -> sections begin/end
+//           -> Section+0x60/0x68  -> atoms begin/end
+//             -> Atom vtable+0x58 -> fixups()
 //
 // Version differences:
 //   SegmentLayout stride:       0x50 (ld-1115) vs 0x58 (ld-1230)
@@ -38,16 +38,18 @@ struct LayoutConstants {
     size_t dynamicFixupPool;
     size_t layoutIndirectBegin;
     size_t layoutIndirectEnd;
+    size_t passFilesBegin;       // consolidator + offset
+    size_t passFilesEnd;
 };
 
 // returns {.valid=false} for unrecognized or classic (ld64) versions.
 inline LayoutConstants layoutConstantsFor(const LinkerVersion &v) {
-    if (!v.isPrime()) return {false, 0, 0, 0, 0, 0, 0};
+    if (!v.isPrime()) return {false, 0, 0, 0, 0, 0, 0, 0, 0};
 
     if (v.major >= 1200) {
-        return {true, 0x58, 0x40, 0x48, 0x1F8, 0x3108, 0x3110};
+        return {true, 0x58, 0x40, 0x48, 0x1F8, 0x3108, 0x3110, 0x878, 0x880};
     }
-    return {true, 0x50, 0x38, 0x40, 0x1B8, 0x3190, 0x3198};
+    return {true, 0x50, 0x38, 0x40, 0x1B8, 0x3190, 0x3198, 0x788, 0x790};
 }
 
 // section field offsets - stable across both ld-prime versions (stride 0x88)
@@ -254,6 +256,65 @@ inline bool validateBuilder(const void *bldr, const LayoutConstants &lc) {
     if (segCount == 0 || segCount > 100) return false;
 
     return true;
+}
+
+// fixup target resolution - mirrors directTargetNoFollow from Fixup.cpp
+
+inline AtomPtr resolveFixupTarget(const Fixup &f, AtomPtr containingAtom,
+                                  const LayoutConstants &lc) {
+    const void *file = atomFile(containingAtom);
+    if (!file) return nullptr;
+
+    uint32_t targetIdx = f.targetIndex();
+
+    if (f.binding() == 0) {
+        const void *const *begin = static_cast<const void *const *>(
+            readPtr(file, AtomFile::kAtomsBegin));
+        const void *const *end = static_cast<const void *const *>(
+            readPtr(file, AtomFile::kAtomsEnd));
+        if (!begin || !end) return nullptr;
+        if (targetIdx >= static_cast<size_t>(end - begin)) return nullptr;
+        return begin[targetIdx];
+    }
+
+    if (!lc.valid || lc.passFilesBegin == 0) return nullptr;
+
+    const void *consolidator = readPtr(file, AtomFile::kConsolidator);
+    if (!consolidator) return nullptr;
+
+    const void *const *passBegin = static_cast<const void *const *>(
+        readPtr(consolidator, lc.passFilesBegin));
+    const void *const *passEnd = static_cast<const void *const *>(
+        readPtr(consolidator, lc.passFilesEnd));
+    if (!passBegin || !passEnd) return nullptr;
+
+    uint8_t passIdx = f.passIndex();
+    if (passIdx >= static_cast<size_t>(passEnd - passBegin)) return nullptr;
+
+    const void *passFile = passBegin[passIdx];
+    if (!passFile) return nullptr;
+
+    const void *const *pBegin = static_cast<const void *const *>(
+        readPtr(passFile, AtomFile::kAtomsBegin));
+    const void *const *pEnd = static_cast<const void *const *>(
+        readPtr(passFile, AtomFile::kAtomsEnd));
+    if (!pBegin || !pEnd) return nullptr;
+    if (targetIdx >= static_cast<size_t>(pEnd - pBegin)) return nullptr;
+
+    return pBegin[targetIdx];
+}
+
+// same as above, but follows alias chains via atom+0x18
+inline AtomPtr resolveFixupTargetFollowAliases(const Fixup &f,
+                                               AtomPtr containingAtom,
+                                               const LayoutConstants &lc) {
+    AtomPtr target = resolveFixupTarget(f, containingAtom, lc);
+    while (target && (atomFlags(target) & AtomFlags::kAlias)) {
+        AtomPtr next = static_cast<AtomPtr>(readPtr(target, atom::kAliasTarget));
+        if (!next) break;
+        target = next;
+    }
+    return target;
 }
 
 } // namespace ld

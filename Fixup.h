@@ -35,12 +35,8 @@ struct Fixup {
     }
 
     enum Kind : uint16_t {
-        // setting kind to kindNone makes all downstream code skip the fixup:
-        // buildChainedFixups won't collect it, applyFixup is a no-op.
-        // IMPORTANT: applyFixup errors on kindNone in final output - set it
-        // AFTER applyFixup writes the pointer, BEFORE buildChainedFixups runs.
-        kindNone          = 0x000,
-
+        kindNone          = 0x000,  // applyFixup errors on this in final output
+        kindKeepAlive     = 0x001,  // applyFixup no-op, skipped by buildChainedFixups
         kindPtr64         = 0x002,
         kindPtr32         = 0x003,
         kindDiff32        = 0x004,

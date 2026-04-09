@@ -213,6 +213,67 @@ namespace DynamicAtomFile {
     inline constexpr size_t kFixupPool_1230 = 0x1F8;
 }
 
+// AtomFile - returned by Atom vtable slot 0 (file()).
+// atoms array entries may point to atoms from other files after resolution.
+
+namespace AtomFile {
+    inline constexpr size_t kAtomsBegin   = 0x08;
+    inline constexpr size_t kAtomsEnd     = 0x10;
+    inline constexpr size_t kAtomsCapacity= 0x18;
+    inline constexpr size_t kConsolidator = 0x38;
+    inline constexpr size_t kPath         = 0x78;
+    inline constexpr size_t kPathLen      = 0x80;
+}
+
+// AtomFile vtable - slot 0 stable, slots 1+ shifted in ld-1221
+
+namespace AtomFileVtable {
+    inline constexpr size_t kPath = 0x00;
+}
+
+// DylibFileInfo (0x90 bytes) - Atom vtable slot 13, NULL for DynamicAtom
+
+namespace DylibFileInfo {
+    inline constexpr size_t kCompatVersion  = 0x00;
+    inline constexpr size_t kCurrentVersion = 0x04;
+    inline constexpr size_t kInstallName    = 0x08;
+    inline constexpr size_t kInstallNameLen = 0x10;
+    inline constexpr size_t kHasWeakDefs    = 0x88;
+    inline constexpr size_t kHasTLVars      = 0x89;
+    inline constexpr size_t kSize           = 0x90;
+}
+
+// atom -> file / dylib accessors
+
+inline const void *atomFile(AtomPtr a) {
+    return atomVCall<const void *>(a, vtable::kFile);
+}
+
+inline const void *atomDylibFileInfo(AtomPtr a) {
+    return atomVCall<const void *>(a, vtable::kDylibFileInfo);
+}
+
+inline const char *dylibInstallName(const void *dfi) {
+    if (!dfi) return nullptr;
+    return static_cast<const char *>(readPtr(dfi, DylibFileInfo::kInstallName));
+}
+
+inline const char *filePath(const void *file) {
+    if (!file) return nullptr;
+    const void *vtbl = readPtr(file, 0);
+    using Fn = const char *(*)(const void *);
+    Fn fn;
+    __builtin_memcpy(&fn, static_cast<const uint8_t *>(vtbl), sizeof(fn));
+    return fn(file);
+}
+
+// tries install name (Atom_1), falls back to file path (DynamicAtom)
+inline const char *atomDylibPath(AtomPtr a) {
+    const char *name = dylibInstallName(atomDylibFileInfo(a));
+    if (name) return name;
+    return filePath(atomFile(a));
+}
+
 // ld64 classic vtable - different slot ordering, fixupsBegin/End iterators
 
 namespace classic {

@@ -49,6 +49,7 @@ struct LinkerVersion {
 
 namespace version {
     inline constexpr LinkerVersion Prime_1115 = {Family::Prime, 1115, 7, 3};
+    inline constexpr LinkerVersion Prime_1221 = {Family::Prime, 1221, 4, 0};
     inline constexpr LinkerVersion Prime_1230 = {Family::Prime, 1230, 1, 0};
     inline constexpr LinkerVersion ld64_820   = {Family::Classic, 820, 1, 0};
 }
