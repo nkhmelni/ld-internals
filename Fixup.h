@@ -10,16 +10,15 @@
 
 namespace ld {
 
-// ld-prime fixup — overlaid on in-memory fixup arrays.
+// ld-prime fixup record - overlaid on in-memory fixup arrays.
 struct Fixup {
 
     uint32_t offsetInAtom;  // +0x00
-    uint32_t targetRef;     // +0x04: binding[31:30] | passIndex[29:24] | targetIndex[23:0]
-    uint32_t kindAddend;    // +0x08: kind[9:0] | hasLargeAddend[10] | addend[31:11]
-    uint32_t extras;        // +0x0C: arm64e auth data or extra addend
+    uint32_t targetRef;     // +0x04  binding[31:30] passIndex[29:24] targetIndex[23:0]
+    uint32_t kindAddend;    // +0x08  kind[9:0] hasLargeAddend[10] addend[31:11]
+    uint32_t extras;        // +0x0C  arm64e auth data or extra addend
 
-    // kind - 10-bit fixup type
-
+    // 10-bit fixup kind.
     static constexpr uint32_t kKindBits = 10;
     static constexpr uint32_t kKindMask = (1u << kKindBits) - 1;
 
@@ -29,16 +28,13 @@ struct Fixup {
         kindAddend = (kindAddend & ~kKindMask) | (k & kKindMask);
     }
 
-    // max kind value: 0x149 in ld-1115 (329 total). kindHasAddendInExtras
-    // and kindHasArm64Extras use jump tables up to this value.
-    // Later versions (ld-1230+) add kinds beyond 0x149 (e.g. 0x182).
+    // Max kind in ld-1115 (329 values). Later versions add beyond 0x149.
     static constexpr uint16_t kKindMax_1115 = 0x149;
 
     // applyFixup dispatches on bits [9:7] (kindAddend & 0x380):
-    //   0x000 → generic  (0x000..0x041)
-    //   0x080 → arm64    (0x080..0x0D1)
-    //   0x100 → x86_64   (0x100..0x149)
-
+    //   0x000 -> generic  (0x000..0x041)
+    //   0x080 -> arm64    (0x080..0x0D1)
+    //   0x100 -> x86_64   (0x100..0x149)
     enum Kind : uint16_t {
         // --- generic kinds (0x000..0x041) ---
         kindNone             = 0x000,  // applyFixup errors on this in output
@@ -91,58 +87,103 @@ struct Fixup {
         kindArm64eAuth2      = 0x182,  // arm64e auth v2
     };
 
-    // binding - 2-bit target resolution type
-
+    // 2-bit binding: 0 = direct (targetIndex), !=0 = pass-generated (passIndex).
     static constexpr uint32_t kBindingShift = 30;
     static constexpr uint32_t kBindingBits  = 2;
     static constexpr uint32_t kBindingMask  = (1u << kBindingBits) - 1;
 
-    // 0 = direct atom ref (targetIndex into source file's atoms).
-    // non-zero = pass-generated atom (passIndex selects which pass).
     uint8_t binding() const {
         return static_cast<uint8_t>((targetRef >> kBindingShift) & kBindingMask);
     }
-
-    // target index - bits [23:0], valid when binding == 0
 
     static constexpr uint32_t kTargetIndexMask = 0x00FFFFFF;
 
     uint32_t targetIndex() const { return targetRef & kTargetIndexMask; }
 
-    // pass index - bits [29:24], valid when binding != 0
-
     uint8_t passIndex() const {
         return static_cast<uint8_t>((targetRef >> 24) & 0x3F);
     }
 
-    // addend - signed 21-bit, or large-addend table index when bit 10 is set
-
+    // Signed 21-bit addend (or large-addend pool index when bit 10 is set).
     static constexpr uint32_t kAddendShift    = 11;
     static constexpr uint32_t kLargeAddendBit = 10;
 
     bool hasLargeAddend() const { return (kindAddend >> kLargeAddendBit) & 1; }
 
     int32_t addend() const {
-        // arithmetic right shift — implementation-defined but guaranteed on Apple targets.
         static_assert(-1 >> 1 == -1, "arithmetic right shift required");
         return static_cast<int32_t>(kindAddend) >> kAddendShift;
     }
 
-    // extras - extra addend or arm64e auth data
-
+    // Extras field: extra addend or arm64e auth data.
     int32_t  extraAddend()       const { return static_cast<int32_t>(extras); }
     uint16_t authDiscriminator() const { return static_cast<uint16_t>(extras >> 16); }
     uint8_t  authInfoByte()      const { return static_cast<uint8_t>(extras >> 24); }
 
-    // pointer-kind classification — coarse filter matching buildChainedFixups.
-    // range [2, 0x0E] includes some non-pointer kinds (0x0A-0x0C) that are
-    // filtered downstream. matches the binary: sub w9, w8, #2; cmp w9, #0xC
+    // Coarse pointer-kind filter matching buildChainedFixups' `sub #2; cmp #0xC`.
+    // Range [2, 0x0E] includes a few non-pointer kinds filtered downstream.
     bool isPointerKind() const {
         uint16_t k = kind();
         if (k >= kindPtr64 && k <= 0x0E) return true;
         return k == kindArm64AuthPtr || k == kindArm64eAuth2;
     }
+
+    // Dispatch-range classifiers (kindAddend & 0x380).
+    static constexpr bool kindIsGeneric(uint16_t k)  { return (k & 0x380) == 0x000; }
+    static constexpr bool kindIsArm64(uint16_t k)    { return (k & 0x380) == 0x080; }
+    static constexpr bool kindIsX86_64(uint16_t k)   { return (k & 0x380) == 0x100; }
+    static constexpr bool kindIsArm64e_v2(uint16_t k){ return (k & 0x380) == 0x180; }
+
+    static constexpr bool kindIsArm64Branch(uint16_t k) {
+        return k == kindArm64Branch26 || k == kindArm64Branch26Add;
+    }
+    static constexpr bool kindIsArm64AdrpAny(uint16_t k) {
+        return k == kindArm64Adrp || k == kindArm64AdrpAdd
+            || k == kindArm64AdrpGot || k == kindArm64AdrpTlv
+            || k == kindArm64AdrpAddPair;
+    }
+    static constexpr bool kindIsArm64Lo12Any(uint16_t k) {
+        return k == kindArm64Lo12 || k == kindArm64Lo12Add
+            || k == kindArm64Lo12Got || k == kindArm64Lo12Tlv;
+    }
+    static constexpr bool kindIsAuth(uint16_t k) {
+        return k == kindArm64AdrpLdrAuth || k == kindArm64AuthPtr
+            || k == kindArm64eAuth2;
+    }
+    static constexpr bool kindIsGot(uint16_t k) {
+        return k == kindPtr32ToGot || k == kindPtr64ToGot
+            || k == kindPcrel32ToGot || k == kindSwiftRel32ToGot
+            || k == kindArm64AdrpGot || k == kindArm64Lo12Got
+            || k == kindArm64AdrpLdrGot;
+    }
+    static constexpr bool kindIsTlv(uint16_t k) {
+        return k == kindTlvOffset || k == kindArm64AdrpTlv
+            || k == kindArm64Lo12Tlv || k == kindX86TlvLoad;
+    }
 };
+
+// mach_o::Fixup - 32-byte post-collection record produced by
+// buildChainedFixups, emitted directly into LC_DYLD_CHAINED_FIXUPS.
+// NOTE: layout documented from LD.md RE and NOT yet cross-verified against
+// a runtime field write - validate each offset before mutating.
+namespace mach_o {
+
+struct Fixup {
+    uint64_t sectionFixupOffset;  // +0x00
+    uint64_t segmentVMAddr;       // +0x08
+    uint32_t isBind;              // +0x10 (u32 for alignment)
+    uint32_t authDiscriminator;   // +0x14
+    uint64_t target;              // +0x18
+};
+
+static_assert(sizeof(Fixup) == 32, "mach_o::Fixup must be 32 bytes");
+static_assert(offsetof(Fixup, sectionFixupOffset) == 0x00, "");
+static_assert(offsetof(Fixup, segmentVMAddr)      == 0x08, "");
+static_assert(offsetof(Fixup, isBind)             == 0x10, "");
+static_assert(offsetof(Fixup, authDiscriminator)  == 0x14, "");
+static_assert(offsetof(Fixup, target)             == 0x18, "");
+
+} // namespace mach_o
 
 static_assert(sizeof(Fixup) == 16, "Fixup must be exactly 16 bytes");
 static_assert(offsetof(Fixup, offsetInAtom) == 0x00, "");
@@ -150,8 +191,7 @@ static_assert(offsetof(Fixup, targetRef)    == 0x04, "");
 static_assert(offsetof(Fixup, kindAddend)   == 0x08, "");
 static_assert(offsetof(Fixup, extras)       == 0x0C, "");
 
-// ld64 classic fixup — different layout: 8-bit kind, 3-bit binding, 8-byte union.
-
+// Classic ld64 fixup: 8-bit kind, 3-bit binding, 8-byte target union.
 namespace classic {
 
 struct Fixup {
@@ -190,7 +230,7 @@ struct Fixup {
 
     enum Kind : uint8_t {
         kindNone = 0,
-        // ~40 more values exist in ld64 - add as needed.
+        // ~40 more values exist; add as needed.
     };
 };
 

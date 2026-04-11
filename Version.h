@@ -1,9 +1,7 @@
 // Copyright (c) 2026 Nikita Hmelnitkii. MIT License - see LICENSE.
 //
-// Version.h - Apple linker version detection
-//
-// Detects whether the running linker is ld-prime (ld-1100+) or classic
-// ld64, and which version, by scanning for the embedded PROJECT string.
+// Version.h - runtime detection of the linker family and version by
+// scanning the loaded ld image for its embedded "PROJECT:ld..." string.
 
 #ifndef LD_VERSION_H
 #define LD_VERSION_H
@@ -55,7 +53,7 @@ namespace version {
     inline constexpr LinkerVersion ld64_820   = {Family::Classic, 820, 1, 0};
 }
 
-// parse "ld-1115.7.3" or "ld64-820.1" into a LinkerVersion.
+// Parse "ld-1115.7.3" or "ld64-820.1" into a LinkerVersion.
 inline LinkerVersion parseProjectString(const char *s) {
     LinkerVersion v = {Family::Unknown, 0, 0, 0};
     if (!s) return v;
@@ -89,7 +87,7 @@ inline LinkerVersion parseProjectString(const char *s) {
     return v;
 }
 
-// search a bounded region for "PROJECT:ld..." and parse the version.
+// Search a bounded region for "PROJECT:ld..." and parse the version.
 inline LinkerVersion findProjectString(const uint8_t *start, const uint8_t *end) {
     static const char needle[] = "PROJECT:ld";
     constexpr size_t nlen = sizeof(needle) - 1;
@@ -127,8 +125,8 @@ inline LinkerVersion findProjectString(const uint8_t *start, const uint8_t *end)
     return {Family::Unknown, 0, 0, 0};
 }
 
-// detect the linker version from the running process.
-// must be called single-threaded (safe inside LinkeditBuilder::build).
+// Detect the linker version from the running process. Single-threaded
+// only (safe inside LinkeditBuilder::build or any hook installed there).
 inline LinkerVersion detectVersion() {
     const uint32_t imageCount = _dyld_image_count();
 
@@ -136,10 +134,18 @@ inline LinkerVersion detectVersion() {
         const char *name = _dyld_get_image_name(i);
         if (!name) return {Family::Unknown, 0, 0, 0};
         size_t len = strlen(name);
-        if (len < 3 || name[len - 1] != 'd' || name[len - 2] != 'l'
-            || name[len - 3] != '/') {
-            return {Family::Unknown, 0, 0, 0};
-        }
+
+        // Basename filter: "ld", "ld-*", "ld64*", "ld.sh". Anything else
+        // is rejected up-front to avoid scanning unrelated images.
+        const char *slash = nullptr;
+        for (size_t k = 0; k < len; ++k) if (name[k] == '/') slash = name + k;
+        const char *base = slash ? slash + 1 : name;
+        bool isLinker =
+            (strcmp(base, "ld") == 0) ||
+            (strncmp(base, "ld-", 3) == 0) ||
+            (strncmp(base, "ld64", 4) == 0) ||
+            (strcmp(base, "ld.sh") == 0);
+        if (!isLinker) return {Family::Unknown, 0, 0, 0};
 
         const auto *mh = reinterpret_cast<const struct mach_header_64 *>(
             _dyld_get_image_header(i));
@@ -158,7 +164,7 @@ inline LinkerVersion detectVersion() {
                 const auto *seg =
                     reinterpret_cast<const struct segment_command_64 *>(lc);
 
-                // only search __TEXT and __DATA - skip __LINKEDIT etc.
+                // Only __TEXT and __DATA carry the PROJECT string.
                 if (strncmp(seg->segname, "__TEXT", 6) != 0
                     && strncmp(seg->segname, "__DATA", 6) != 0) {
                     lc = reinterpret_cast<const struct load_command *>(
@@ -180,7 +186,7 @@ inline LinkerVersion detectVersion() {
         return {Family::Unknown, 0, 0, 0};
     };
 
-    // fast path: image 0 is the main executable (the ld binary itself)
+    // Fast path: image 0 is the main executable (the ld binary itself).
     if (imageCount > 0) {
         LinkerVersion v = checkImage(0);
         if (v.family != Family::Unknown) return v;

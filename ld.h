@@ -1,17 +1,18 @@
 // Copyright (c) 2026 Nikita Hmelnitkii. MIT License - see LICENSE.
 //
-// ld.h - reverse-engineered layouts for Apple's ld-prime and ld64 linkers
+// ld.h - reverse-engineered layouts for Apple's ld-prime and ld64 linkers.
 //
-// Supports ld-prime (ld-1115.7.3, ld-1221.4, ld-1230.1, ld-1266.8) and ld64 (ld64-820.1).
-// All offsets derived from arm64 disassembly and validated against real binaries.
+// Supports ld-prime 1115.7.3 / 1221.4 / 1230.1 / 1266.8 and ld64-820.1.
+// Offsets are derived from arm64/x86_64 disassembly and cross-checked
+// against real linker binaries.
 //
-// Example - reading atoms and fixups from within the linker process:
+// Minimal usage pattern:
 //
 //   auto lc = ld::layoutConstantsFor(ld::detectVersion());
 //   if (!ld::validateBuilder(builder, lc)) return;
 //
-//   auto *lay = ld::builderGetLayout(builder);
-//   auto *sec = ld::findSection(lay, lc, "__DATA", "my_section");
+//   const void *lay = ld::builderGetLayout(builder);
+//   const void *sec = ld::findSection(lay, lc, "__DATA", "my_section");
 //   if (!sec) return;
 //
 //   for (auto *ap = ld::sectionAtomsBegin(sec);
@@ -25,8 +26,13 @@
 #define LD_H
 
 #include "Version.h"
+#include "Primitives.h"
+#include "Mach.h"
+#include "LinkEdit.h"
 #include "Fixup.h"
 #include "Atom.h"
+#include "Options.h"
+#include "Consolidator.h"
 #include "Layout.h"
 
 #endif

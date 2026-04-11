@@ -1,12 +1,15 @@
 // Copyright (c) 2026 Nikita Hmelnitkii. MIT License - see LICENSE.
 //
 // Atom.h - atom layout, BIND/REBASE classification, file/dylib accessors.
-// Atom_1 (0x30, .o files), DynamicAtom (0x58, GOT/stubs). Vtable stable.
+// Atom_1 = 0x30 (.o files), DynamicAtom = 0x58 (GOT/stubs). Vtables stable.
 
 #ifndef LD_ATOM_H
 #define LD_ATOM_H
 
 #include "Fixup.h"
+#include "Primitives.h"
+#include "Mach.h"
+#include "LinkEdit.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -14,7 +17,7 @@
 
 namespace ld {
 
-// memory access
+// Unaligned memory access primitives.
 
 inline uint8_t  readU8 (const void *b, size_t o) { return static_cast<const uint8_t*>(b)[o]; }
 inline uint16_t readU16(const void *b, size_t o) { uint16_t v; __builtin_memcpy(&v, static_cast<const uint8_t*>(b)+o, 2); return v; }
@@ -28,8 +31,7 @@ inline void writeU32(void *b, size_t o, uint32_t v) { __builtin_memcpy(static_ca
 inline void writeU64(void *b, size_t o, uint64_t v) { __builtin_memcpy(static_cast<uint8_t*>(b)+o, &v, 8); }
 inline void writePtr(void *b, size_t o, const void *v) { __builtin_memcpy(static_cast<uint8_t*>(b)+o, &v, sizeof(v)); }
 
-// atom kind (+0x08) - BIND vs REBASE via makeBindTarget bitmask 0x103F
-
+// atom kind (+0x08). BIND vs REBASE via makeBindTarget bitmask 0x103F.
 namespace AtomKind {
     inline constexpr uint8_t kRegular0     = 0x00;
     inline constexpr uint8_t kRegular1     = 0x01;
@@ -58,8 +60,7 @@ namespace AtomKind {
     constexpr bool isTentative(uint8_t k)   { return k >= kTentative0 && k <= kTentative3; }
 }
 
-// atom scope (+0x09) - ld::file_format::Scope
-
+// atom scope (+0x09) - ld::file_format::Scope values.
 namespace AtomScope {
     inline constexpr uint8_t kTranslationUnit  = 0;
     inline constexpr uint8_t kHidden           = 1;
@@ -68,10 +69,8 @@ namespace AtomScope {
     inline constexpr uint8_t kGlobalNeverStrip = 4;
 }
 
-// atom content type (+0x0A) - determines section assignment.
-// values 0x3B-0x3E (segmentStart/End, sectionStart/End) and 0x3F (custom)
-// are internal markers, not standard sections.
-
+// atom content type (+0x0A) - section assignment driver. Values 0x3B-0x3F
+// are internal markers (segmentStart/End, sectionStart/End, custom).
 namespace ContentType {
     inline constexpr uint8_t kInvalid          = 0x00;
     inline constexpr uint8_t kNone             = 0x01;
@@ -156,10 +155,10 @@ namespace DynamicAtomFlags {
     inline constexpr uint8_t kDontDeadStripIfRefsLive = 0x02;
     inline constexpr uint8_t kCold                    = 0x04;
     inline constexpr uint8_t kHasLinkConstraints      = 0x08;
+    inline constexpr uint8_t kHasLOHs                 = 0x10;  // DynamicAtom::hasLOHs()
 }
 
-// opaque atom pointer and accessors
-
+// Opaque atom handle. All reads go through offset-based accessors.
 using AtomPtr = const void *;
 
 inline uint8_t atomKind(AtomPtr a)        { return readU8(a, 0x08); }
@@ -174,8 +173,7 @@ inline bool    atomIsAlias(AtomPtr a)     { return (atomFlags(a) & AtomFlags::kA
 inline AtomPtr atomAliasTarget(AtomPtr a) { return static_cast<AtomPtr>(readPtr(a, 0x18)); }
 inline const void *atomPlacement(AtomPtr a) { return readPtr(a, 0x10); }
 
-// vtable dispatch
-
+// Vtable dispatch helpers. `slot` is the byte offset within the vtable.
 template <typename R>
 inline R atomVCall(AtomPtr a, size_t slot) {
     const void *vt = readPtr(a, 0);
@@ -200,7 +198,14 @@ inline R fileVCallArg(const void *f, size_t slot, A arg) {
     return fn(f, arg);
 }
 
-// InternedString - name() returns {header, hash, cstr} not a bare C string
+// ld::SymbolString - 16-byte header in front of a null-terminated C string,
+// owned by SymbolStringZone. `InternedString` is a legacy alias kept so
+// existing call sites compile against both names.
+namespace SymbolString {
+    inline constexpr size_t kOwnerZone = 0x00;  // ptr to ChunkBumpAllocatorZone
+    inline constexpr size_t kHash      = 0x08;  // pre-hashed string value
+    inline constexpr size_t kCStr      = 0x10;  // null-terminated C string
+}
 namespace InternedString {
     inline constexpr size_t kHeader = 0x00;
     inline constexpr size_t kHash   = 0x08;
@@ -213,9 +218,9 @@ inline const char *atomName(AtomPtr a) {
     return raw ? static_cast<const char*>(raw) + InternedString::kCStr : nullptr;
 }
 
-// fixups() - vtable slot 11 (+0x58), stable
+// atomFixups() - vtable slot +0x58, stable across all versions.
 struct FixupSpan { Fixup *ptr; uint32_t count; };
-static_assert(sizeof(FixupSpan) == 16, "register return ABI");
+static_assert(sizeof(FixupSpan) == 16, "");
 
 inline FixupSpan atomFixups(AtomPtr a) {
     const void *vt = readPtr(a, 0);
@@ -224,7 +229,7 @@ inline FixupSpan atomFixups(AtomPtr a) {
     return fn(a);
 }
 
-// atom vtable slots 0-14 (stable)
+// atom vtable slots 0-15 (stable)
 namespace vtable {
     inline constexpr size_t kFile          = 0x00;
     inline constexpr size_t kName          = 0x08;
@@ -241,11 +246,13 @@ namespace vtable {
     inline constexpr size_t kIsDynamicAtom = 0x60;
     inline constexpr size_t kDylibFileInfo = 0x68;
     inline constexpr size_t kHasLinkConstraints = 0x70;
+    inline constexpr size_t kHasLOHs       = 0x78;
 }
 
 inline bool isDynamicAtom(AtomPtr a) { return atomVCall<bool>(a, vtable::kIsDynamicAtom); }
+inline bool atomHasLOHs(AtomPtr a)   { return atomVCall<bool>(a, vtable::kHasLOHs); }
 
-// atom base class fields (stable)
+// Atom base class fields (stable across versions).
 namespace atom {
     inline constexpr size_t kVtable      = 0x00;
     inline constexpr size_t kKind        = 0x08;
@@ -275,7 +282,8 @@ namespace atom {
     inline constexpr size_t kDynamic_Size       = 0x58;
 }
 
-// AtomRO_1 - read-only data for Atom_1 (+0x20). fixups: pool + RO[0x08]*16, count=RO[0x04].
+// AtomRO_1 - read-only data for Atom_1 (+0x20). Fixups: pool + RO[0x08]*16,
+// count = RO[0x04].
 namespace AtomRO {
     inline constexpr size_t kOrdinal       = 0x00;
     inline constexpr size_t kFixupCount    = 0x04;
@@ -292,7 +300,7 @@ namespace AtomRO {
     inline constexpr size_t kSize          = 0x28;
 }
 
-// AtomFile base fields (stable)
+// AtomFile base fields (stable across versions).
 namespace AtomFile {
     inline constexpr size_t kVtable       = 0x00;
     inline constexpr size_t kAtomsBegin   = 0x08;
@@ -303,8 +311,8 @@ namespace AtomFile {
     inline constexpr size_t kPathLen      = 0x80;
 }
 
-// AtomFile vtable. Slot 0 (path) stable. ld-1221+ inserts srcPath at slot 1,
-// shifting all subsequent slots +0x08, and adds atomLOHs/fileLOHs at end.
+// AtomFile vtable. ld-1221+ inserts srcPath at slot 1 (+0x08 shift to all
+// subsequent slots) and appends atomLOHs/fileLOHs at the tail.
 namespace AtomFileVtable {
     inline constexpr size_t kPath = 0x00;
 
@@ -327,8 +335,8 @@ namespace AtomFileVtable {
     inline constexpr size_t kFileLOHs_1221           = 0x70;
 }
 
-// DynamicAtomFile version-dependent field offsets.
-// Three tiers: ld-1115 / ld-1221 (srcPath shift) / ld-1266 (further shift).
+// DynamicAtomFile field offsets. Three tiers:
+//   ld-1115, ld-1221/1230 (+srcPath shift), ld-1266 (+further shift).
 namespace DynamicAtomFile {
     // fixup pool
     inline constexpr size_t kFixupPool_1115          = 0x1B8;
@@ -369,8 +377,7 @@ namespace DynamicAtomFile {
     inline constexpr size_t kLargeAddends_1266       = 0x230;
 }
 
-// AtomFile_1 version-dependent field offsets.
-// Two tiers: ld-1115 / ld-1221+ (srcPath shift adds +0x10).
+// AtomFile_1 field offsets. Two tiers: ld-1115 / ld-1221+ (+0x10 shift).
 namespace AtomFile1 {
     // dylib file info
     inline constexpr size_t kDylibFileInfo_1115      = 0x88;
@@ -389,7 +396,8 @@ namespace AtomFile1 {
     inline constexpr size_t kDependencyInfos_1221    = 0xF8;
 }
 
-// DylibFileInfo (0x90 bytes, stable). CString = {ptr, len}. Vectors = {begin, end, cap}.
+// DylibFileInfo - 0x90 bytes, stable across versions.
+// CString = {ptr, len}. Vectors = {begin, end, cap}.
 namespace DylibFileInfo {
     inline constexpr size_t kCompatVersion        = 0x00;
     inline constexpr size_t kCurrentVersion       = 0x04;
@@ -414,12 +422,10 @@ namespace DylibFileInfo {
     inline constexpr size_t kSize                 = 0x90;
 }
 
-// file / dylib accessors
-
-inline const void *atomFile(AtomPtr a)         { return atomVCall<const void*>(a, vtable::kFile); }
+inline const void *atomFile(AtomPtr a)          { return atomVCall<const void*>(a, vtable::kFile); }
 inline const void *atomDylibFileInfo(AtomPtr a) { return atomVCall<const void*>(a, vtable::kDylibFileInfo); }
 
-// raw content - vtable slot 10 (+0x50), returns {ptr, size}
+// Raw content - vtable slot kRawContent, returns {ptr, size}.
 struct RawContent { const uint8_t *ptr; uint64_t size; };
 inline RawContent atomRawContent(AtomPtr a) {
     const void *vt = readPtr(a, 0);
@@ -428,15 +434,89 @@ inline RawContent atomRawContent(AtomPtr a) {
     return fn(a);
 }
 
+// Install name is guaranteed null-terminated by makeDylibFileInfo's
+// malloc(len+1) + trailing nul. Returns nullptr only when dfi is null.
 inline const char *dylibInstallName(const void *dfi) {
     return dfi ? static_cast<const char*>(readPtr(dfi, DylibFileInfo::kInstallName)) : nullptr;
+}
+
+// CString form (ptr, len) - avoids strlen when the length is already known.
+inline CString dylibInstallNameCStr(const void *dfi) {
+    if (!dfi) return {};
+    return CString{
+        static_cast<const char*>(readPtr(dfi, DylibFileInfo::kInstallName)),
+        readU64(dfi, DylibFileInfo::kInstallNameLen)
+    };
+}
+
+// Parent framework - non-empty only for sub-frameworks (e.g. libGLImage
+// under OpenGL.framework). Borrowed CString, NOT guaranteed null-terminated.
+inline CString dylibParentFramework(const void *dfi) {
+    if (!dfi) return {};
+    return CString{
+        static_cast<const char*>(readPtr(dfi, DylibFileInfo::kParentFrameworkPtr)),
+        readU64(dfi, DylibFileInfo::kParentFrameworkLen)
+    };
+}
+
+// LC_ID_DYLIB compat / current versions (Version32).
+inline Version32 dylibCompatVersion(const void *dfi) {
+    if (!dfi) return {};
+    return Version32{readU32(dfi, DylibFileInfo::kCompatVersion)};
+}
+inline Version32 dylibCurrentVersion(const void *dfi) {
+    if (!dfi) return {};
+    return Version32{readU32(dfi, DylibFileInfo::kCurrentVersion)};
+}
+
+inline bool dylibHasWeakDefs(const void *dfi) {
+    return dfi && readU8(dfi, DylibFileInfo::kHasWeakDefs) != 0;
+}
+inline bool dylibHasTLVars(const void *dfi) {
+    return dfi && readU8(dfi, DylibFileInfo::kHasTLVars) != 0;
+}
+
+// LC_BUILD_VERSION platform IDs present in the dylib.
+inline Span<uint32_t> dylibPlatformIds(const void *dfi) {
+    if (!dfi) return {};
+    return Span<uint32_t>{
+        static_cast<const uint32_t*>(readPtr(dfi, DylibFileInfo::kPlatformsBegin)),
+        static_cast<const uint32_t*>(readPtr(dfi, DylibFileInfo::kPlatformsEnd))
+    };
+}
+
+// LC_SUB_CLIENT allowed-client list.
+inline Span<CString> dylibAllowedClients(const void *dfi) {
+    if (!dfi) return {};
+    return Span<CString>{
+        static_cast<const CString*>(readPtr(dfi, DylibFileInfo::kAllowedClientsBegin)),
+        static_cast<const CString*>(readPtr(dfi, DylibFileInfo::kAllowedClientsEnd))
+    };
+}
+
+// LC_REEXPORT_DYLIB install names.
+inline Span<CString> dylibReexports(const void *dfi) {
+    if (!dfi) return {};
+    return Span<CString>{
+        static_cast<const CString*>(readPtr(dfi, DylibFileInfo::kReexportedDylibsBegin)),
+        static_cast<const CString*>(readPtr(dfi, DylibFileInfo::kReexportedDylibsEnd))
+    };
+}
+
+// LC_LOAD_UPWARD_DYLIB references.
+inline Span<CString> dylibUpwardDeps(const void *dfi) {
+    if (!dfi) return {};
+    return Span<CString>{
+        static_cast<const CString*>(readPtr(dfi, DylibFileInfo::kUpwardDylibsBegin)),
+        static_cast<const CString*>(readPtr(dfi, DylibFileInfo::kUpwardDylibsEnd))
+    };
 }
 
 inline const char *filePath(const void *file) {
     return file ? fileVCall<const char*>(file, AtomFileVtable::kPath) : nullptr;
 }
 
-// version-dependent file vtable accessors (pass vtSlot from LayoutConstants)
+// Version-dependent file vtable accessors. Pass the slot from LayoutConstants.
 inline const char *fileSrcPath(const void *file, size_t vtSlot) {
     if (!file || vtSlot == 0) return nullptr;
     return fileVCall<const char*>(file, vtSlot);
@@ -454,19 +534,19 @@ inline const char *fileDylibInstallName(const void *file, size_t vtSlot) {
     return dylibInstallName(fileDylibFileInfo(file, vtSlot));
 }
 
-// tries atom's DylibFileInfo, falls back to file path
+// Install name from DylibFileInfo; falls back to file path.
 inline const char *atomDylibPath(AtomPtr a) {
     const char *n = dylibInstallName(atomDylibFileInfo(a));
     return n ? n : filePath(atomFile(a));
 }
 
-// ld64 classic vtable (ARM64 ABI: 2 destructor slots)
+// Classic ld64 Atom vtable. ARM64 ABI has 2 destructor slots at the top.
 namespace classic { namespace vtable {
     inline constexpr size_t kDestructorD1 = 0x00;  // ~Atom() complete object
     inline constexpr size_t kDestructorD0 = 0x08;  // ~Atom() deleting
     inline constexpr size_t kFile         = 0x10;
-    inline constexpr size_t kTUSource     = 0x18;  // translationUnitSource()
-    inline constexpr size_t kName         = 0x20;  // returns const char* directly (not InternedString)
+    inline constexpr size_t kTUSource     = 0x18;
+    inline constexpr size_t kName         = 0x20;  // returns const char* directly
     inline constexpr size_t kObjectAddr   = 0x28;
     inline constexpr size_t kSize         = 0x30;
     inline constexpr size_t kCopyContent  = 0x38;

@@ -1,13 +1,16 @@
 // Copyright (c) 2026 Nikita Hmelnitkii. MIT License - see LICENSE.
 //
-// Layout.h - Builder → Layout → Segments → Sections → Atoms → Fixups.
-// Segment stride: 0x50 (ld-1115), 0x58 (ld-1221+). Sections: 0x88. Atoms: +0x60/+0x68.
+// Layout.h - Builder -> LayoutExecutable -> Segments -> Sections -> Atoms -> Fixups.
+// Segment stride: 0x50 (ld-1115), 0x58 (ld-1221+). Section stride: 0x88.
+// Version-dependent offsets are packed into LayoutConstants.
 
 #ifndef LD_LAYOUT_H
 #define LD_LAYOUT_H
 
 #include "Version.h"
-#include "Atom.h"
+#include "Atom.h"           // transitively: Fixup, Primitives, Mach, LinkEdit
+#include "Options.h"
+#include "Consolidator.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -15,53 +18,102 @@
 
 namespace ld {
 
-// version-dependent offsets - call layoutConstantsFor() once and cache.
-
+// Version-dependent offsets. Call layoutConstantsFor() once and cache.
+// A zero offset means "not supported on this version"; accessors no-op.
 struct LayoutConstants {
     bool   valid;
-    // segment layout
+
+    // Segment layout.
     size_t segmentStride;
     size_t segSectionsBegin;
     size_t segSectionsEnd;
-    // DynamicAtomFile fields
+
+    // DynamicAtomFile fields.
     size_t dynamicFixupPool;
     size_t dynamicFileDylibFileInfo;
     size_t dynamicFileIsLTO;
     size_t dynamicFileLinkerOptions;
     size_t dynamicFileAltFileInfos;
     size_t dynamicFileLargeAddends;
-    // layout indirects
+    size_t dynamicFileFileLOHs;        // u64 packed records, 8B stride
+
+    // LayoutExecutable indirects vector.
     size_t layoutIndirectBegin;
     size_t layoutIndirectEnd;
-    // consolidator passFiles
+
+    // Consolidator pass-files vector.
     size_t passFilesBegin;
     size_t passFilesEnd;
-    // AtomFile vtable (shifted +0x08 in ld-1221 due to srcPath insertion)
-    size_t fileVtableSrcPath;          // 0 in ld-1115 (not present)
+
+    // AtomFile vtable - +0x08 shift on ld-1221+ (srcPath inserted at slot 1).
+    size_t fileVtableSrcPath;
     size_t fileVtableDylibFileInfo;
     size_t fileVtableDependencyInfos;
     size_t fileVtableLinkerOptions;
     size_t fileVtableLargeAddends;
     size_t fileVtableIsLTO;
     size_t fileVtableIsDynamic;
-    size_t fileVtableAtomLOHs;         // 0 in ld-1115 (not present)
-    size_t fileVtableFileLOHs;         // 0 in ld-1115 (not present)
-    // AtomFile_1 fields (shifted +0x10 in ld-1221)
+    size_t fileVtableAtomLOHs;
+    size_t fileVtableFileLOHs;
+
+    // AtomFile_1 fields - +0x10 shift on ld-1221+.
     size_t atomFile1DylibFileInfo;
     size_t atomFile1FixupPool;
     size_t atomFile1LargeAddends;
     size_t atomFile1LinkerOptions;
     size_t atomFile1DependencyInfos;
+
+    // Options flags - absolute offsets within Options.
+    size_t optionsOptimizationsBase;
+    size_t optionsDeadStrip;
+    size_t optionsDeadStripDylibs;
+    size_t optionsAllowDeadDuplicates;
+    size_t optionsMergeZeroFillSections;
+
+    // AtomFileConsolidator - dylib vectors and Options path navigation.
+    size_t consolidatorOptions;              // always 0x00 on ld-prime
+    size_t consolidatorInputDylibsBegin;     // always 0x2F0
+    size_t consolidatorInputDylibsEnd;
+    size_t consolidatorOutputDylibsBegin;    // feeds LC_LOAD_DYLIB
+    size_t consolidatorOutputDylibsEnd;
+    size_t consolidatorOutputDylibsCap;
+
+    // LayoutExecutable - ld-1115 is flat; ld-1221+ inherits from
+    // LayoutLinkedImage with very different offsets. Always use these
+    // fields (not the `layout::` namespace constants, which are 1115-only).
+    size_t layoutOptionsRef;         // 0x008 (1115) / 0x000 (1221+)
+    size_t layoutConsolidatorRef;    // 0x108 / 0x0C8
+    size_t layoutArch;               // 0x188 / 0x100
+    size_t layoutSegmentsBegin;      // 0x120 / 0x3190 (1221/30) / 0x31A0 (1266)
+    size_t layoutSegmentsEnd;
+    size_t layoutSegmentsCap;
+    size_t layoutLoadCmdsBase;       // 0 (1115) / 0x3108
+    size_t layoutLoadCmdsCount;      // 0 / 0x3110
+    size_t layoutDylibMapping;       // 0 / 0x0D8
+    size_t layoutEntryAtom;          // 0 / 0x0D0
 };
 
-// returns {.valid=false} for unrecognized or classic (ld64) versions.
+// Returns {.valid=false} for unrecognized versions.
 inline LayoutConstants layoutConstantsFor(const LinkerVersion &v) {
     LayoutConstants lc = {};
+
+    // Classic ld64 reaches Options directly via dylibs::doPass's first arg;
+    // there's no Consolidator, so those fields stay zero.
+    if (v.isClassic()) {
+        lc.valid = true;
+        lc.optionsOptimizationsBase = 0;
+        lc.optionsDeadStripDylibs   = classic::options_offsets::Ld64_820::kDeadStripDylibs;
+        return lc;
+    }
+
     if (!v.isPrime()) return lc;
     lc.valid = true;
 
+    // Stable across every ld-prime version.
+    lc.consolidatorOptions          = consolidator::kOptionsPtr;
+    lc.consolidatorInputDylibsBegin = consolidator::kInputDylibsBegin;
+
     if (v.major >= 1266) {
-        // ld-1266+: DynamicAtomFile fields shifted further
         lc.segmentStride = 0x58;
         lc.segSectionsBegin = 0x40; lc.segSectionsEnd = 0x48;
         lc.dynamicFixupPool = 0x218;
@@ -70,8 +122,11 @@ inline LayoutConstants layoutConstantsFor(const LinkerVersion &v) {
         lc.dynamicFileLinkerOptions = 0x148;
         lc.dynamicFileAltFileInfos = 0x180;
         lc.dynamicFileLargeAddends = 0x230;
-        lc.layoutIndirectBegin = 0x3108; lc.layoutIndirectEnd = 0x3110;
-        lc.passFilesBegin = 0x878; lc.passFilesEnd = 0x880;
+        lc.dynamicFileFileLOHs = 0x1D0;
+        lc.layoutIndirectBegin = 0x3108;
+        lc.layoutIndirectEnd   = 0x3110;
+        lc.passFilesBegin = 0x878;
+        lc.passFilesEnd   = 0x880;
         lc.fileVtableSrcPath = 0x08;
         lc.fileVtableDylibFileInfo = 0x28;
         lc.fileVtableDependencyInfos = 0x30;
@@ -81,13 +136,35 @@ inline LayoutConstants layoutConstantsFor(const LinkerVersion &v) {
         lc.fileVtableIsDynamic = 0x18;
         lc.fileVtableAtomLOHs = 0x68;
         lc.fileVtableFileLOHs = 0x70;
-        lc.atomFile1DylibFileInfo = 0x98;
-        lc.atomFile1FixupPool = 0xA0;
-        lc.atomFile1LargeAddends = 0xB0;
-        lc.atomFile1LinkerOptions = 0xE0;
+        lc.atomFile1DylibFileInfo   = 0x98;
+        lc.atomFile1FixupPool       = 0xA0;
+        lc.atomFile1LargeAddends    = 0xB0;
+        lc.atomFile1LinkerOptions   = 0xE0;
         lc.atomFile1DependencyInfos = 0xF8;
+
+        lc.optionsOptimizationsBase     = options_offsets::Prime_1266::kOptimizationsBase;
+        lc.optionsDeadStrip             = options_offsets::Prime_1266::kDeadStrip;
+        lc.optionsDeadStripDylibs       = options_offsets::Prime_1266::kDeadStripDylibs;
+        lc.optionsAllowDeadDuplicates   = options_offsets::Prime_1266::kAllowDeadDuplicates;
+        lc.optionsMergeZeroFillSections = options_offsets::Prime_1266::kMergeZeroFillSections;
+
+        lc.consolidatorInputDylibsEnd    = consolidator_offsets::Prime_1221Plus::kInputDylibsEnd;
+        lc.consolidatorOutputDylibsBegin = consolidator_offsets::Prime_1221Plus::kOutputDylibsBegin;
+        lc.consolidatorOutputDylibsEnd   = consolidator_offsets::Prime_1221Plus::kOutputDylibsEnd;
+        lc.consolidatorOutputDylibsCap   = consolidator_offsets::Prime_1221Plus::kOutputDylibsCap;
+
+        // LayoutLinkedImage base + +0x10 drift in the derived tail.
+        lc.layoutOptionsRef       = 0x000;
+        lc.layoutConsolidatorRef  = 0x0C8;
+        lc.layoutArch             = 0x100;
+        lc.layoutSegmentsBegin    = 0x31A0;
+        lc.layoutSegmentsEnd      = 0x31A8;
+        lc.layoutSegmentsCap      = 0x31B0;
+        lc.layoutLoadCmdsBase     = 0x3108;
+        lc.layoutLoadCmdsCount    = 0x3110;
+        lc.layoutDylibMapping     = 0x0D8;
+        lc.layoutEntryAtom        = 0x0D0;
     } else if (v.major >= 1200) {
-        // ld-1221/1230: srcPath() inserted at AtomFile vtable slot 1
         lc.segmentStride = 0x58;
         lc.segSectionsBegin = 0x40; lc.segSectionsEnd = 0x48;
         lc.dynamicFixupPool = 0x1F8;
@@ -96,8 +173,11 @@ inline LayoutConstants layoutConstantsFor(const LinkerVersion &v) {
         lc.dynamicFileLinkerOptions = 0x140;
         lc.dynamicFileAltFileInfos = 0x178;
         lc.dynamicFileLargeAddends = 0x210;
-        lc.layoutIndirectBegin = 0x3108; lc.layoutIndirectEnd = 0x3110;
-        lc.passFilesBegin = 0x878; lc.passFilesEnd = 0x880;
+        lc.dynamicFileFileLOHs = 0x1C8;
+        lc.layoutIndirectBegin = 0x3108;
+        lc.layoutIndirectEnd   = 0x3110;
+        lc.passFilesBegin = 0x878;
+        lc.passFilesEnd   = 0x880;
         lc.fileVtableSrcPath = 0x08;
         lc.fileVtableDylibFileInfo = 0x28;
         lc.fileVtableDependencyInfos = 0x30;
@@ -107,13 +187,35 @@ inline LayoutConstants layoutConstantsFor(const LinkerVersion &v) {
         lc.fileVtableIsDynamic = 0x18;
         lc.fileVtableAtomLOHs = 0x68;
         lc.fileVtableFileLOHs = 0x70;
-        lc.atomFile1DylibFileInfo = 0x98;
-        lc.atomFile1FixupPool = 0xA0;
-        lc.atomFile1LargeAddends = 0xB0;
-        lc.atomFile1LinkerOptions = 0xE0;
+        lc.atomFile1DylibFileInfo   = 0x98;
+        lc.atomFile1FixupPool       = 0xA0;
+        lc.atomFile1LargeAddends    = 0xB0;
+        lc.atomFile1LinkerOptions   = 0xE0;
         lc.atomFile1DependencyInfos = 0xF8;
+
+        lc.optionsOptimizationsBase     = options_offsets::Prime_1221::kOptimizationsBase;
+        lc.optionsDeadStrip             = options_offsets::Prime_1221::kDeadStrip;
+        lc.optionsDeadStripDylibs       = options_offsets::Prime_1221::kDeadStripDylibs;
+        lc.optionsAllowDeadDuplicates   = options_offsets::Prime_1221::kAllowDeadDuplicates;
+        lc.optionsMergeZeroFillSections = options_offsets::Prime_1221::kMergeZeroFillSections;
+
+        lc.consolidatorInputDylibsEnd    = consolidator_offsets::Prime_1221Plus::kInputDylibsEnd;
+        lc.consolidatorOutputDylibsBegin = consolidator_offsets::Prime_1221Plus::kOutputDylibsBegin;
+        lc.consolidatorOutputDylibsEnd   = consolidator_offsets::Prime_1221Plus::kOutputDylibsEnd;
+        lc.consolidatorOutputDylibsCap   = consolidator_offsets::Prime_1221Plus::kOutputDylibsCap;
+
+        // LayoutLinkedImage ctor is byte-identical between 1221 and 1230.
+        lc.layoutOptionsRef       = 0x000;
+        lc.layoutConsolidatorRef  = 0x0C8;
+        lc.layoutArch             = 0x100;
+        lc.layoutSegmentsBegin    = 0x3190;
+        lc.layoutSegmentsEnd      = 0x3198;
+        lc.layoutSegmentsCap      = 0x31A0;
+        lc.layoutLoadCmdsBase     = 0x3108;
+        lc.layoutLoadCmdsCount    = 0x3110;
+        lc.layoutDylibMapping     = 0x0D8;
+        lc.layoutEntryAtom        = 0x0D0;
     } else {
-        // ld-1115
         lc.segmentStride = 0x50;
         lc.segSectionsBegin = 0x38; lc.segSectionsEnd = 0x40;
         lc.dynamicFixupPool = 0x1B8;
@@ -122,28 +224,55 @@ inline LayoutConstants layoutConstantsFor(const LinkerVersion &v) {
         lc.dynamicFileLinkerOptions = 0x130;
         lc.dynamicFileAltFileInfos = 0x168;
         lc.dynamicFileLargeAddends = 0x1D0;
-        lc.layoutIndirectBegin = 0x3190; lc.layoutIndirectEnd = 0x3198;
-        lc.passFilesBegin = 0x788; lc.passFilesEnd = 0x790;
-        lc.fileVtableSrcPath = 0;  // not present in ld-1115
-        lc.fileVtableDylibFileInfo = 0x20;
+        lc.dynamicFileFileLOHs = 0;        // LOHs not emitted by 1115
+        lc.layoutIndirectBegin = 0x3190;
+        lc.layoutIndirectEnd   = 0x3198;
+        lc.passFilesBegin = 0x788;
+        lc.passFilesEnd   = 0x790;
+        lc.fileVtableSrcPath         = 0;  // srcPath not present in 1115
+        lc.fileVtableDylibFileInfo   = 0x20;
         lc.fileVtableDependencyInfos = 0x28;
-        lc.fileVtableLinkerOptions = 0x30;
-        lc.fileVtableLargeAddends = 0x38;
-        lc.fileVtableIsLTO = 0x40;
-        lc.fileVtableIsDynamic = 0x10;
-        lc.fileVtableAtomLOHs = 0;   // not present in ld-1115
-        lc.fileVtableFileLOHs = 0;   // not present in ld-1115
-        lc.atomFile1DylibFileInfo = 0x88;
-        lc.atomFile1FixupPool = 0x90;
-        lc.atomFile1LargeAddends = 0xA0;
-        lc.atomFile1LinkerOptions = 0xD0;
+        lc.fileVtableLinkerOptions   = 0x30;
+        lc.fileVtableLargeAddends    = 0x38;
+        lc.fileVtableIsLTO           = 0x40;
+        lc.fileVtableIsDynamic       = 0x10;
+        lc.fileVtableAtomLOHs        = 0;
+        lc.fileVtableFileLOHs        = 0;
+        lc.atomFile1DylibFileInfo   = 0x88;
+        lc.atomFile1FixupPool       = 0x90;
+        lc.atomFile1LargeAddends    = 0xA0;
+        lc.atomFile1LinkerOptions   = 0xD0;
         lc.atomFile1DependencyInfos = 0xE8;
+
+        // ld-1115 Options is flat - no Optimizations sub-struct.
+        lc.optionsOptimizationsBase     = 0;
+        lc.optionsDeadStrip             = options_offsets::Prime_1115::kDeadStrip;
+        lc.optionsDeadStripDylibs       = options_offsets::Prime_1115::kDeadStripDylibs;
+        lc.optionsAllowDeadDuplicates   = options_offsets::Prime_1115::kAllowDeadDuplicates;
+        lc.optionsMergeZeroFillSections = options_offsets::Prime_1115::kMergeZeroFillSections;
+
+        lc.consolidatorInputDylibsEnd    = consolidator_offsets::Prime_1115::kInputDylibsEnd;
+        lc.consolidatorOutputDylibsBegin = consolidator_offsets::Prime_1115::kOutputDylibsBegin;
+        lc.consolidatorOutputDylibsEnd   = consolidator_offsets::Prime_1115::kOutputDylibsEnd;
+        lc.consolidatorOutputDylibsCap   = consolidator_offsets::Prime_1115::kOutputDylibsCap;
+
+        // ld-1115 LayoutExecutable is flat (vtable at +0x00).
+        lc.layoutOptionsRef       = 0x008;
+        lc.layoutConsolidatorRef  = 0x108;
+        lc.layoutArch             = 0x188;
+        lc.layoutSegmentsBegin    = 0x120;
+        lc.layoutSegmentsEnd      = 0x128;
+        lc.layoutSegmentsCap      = 0x130;
+        lc.layoutLoadCmdsBase     = 0;
+        lc.layoutLoadCmdsCount    = 0;
+        lc.layoutDylibMapping     = 0;
+        lc.layoutEntryAtom        = 0;
     }
     return lc;
 }
 
-// section fields (stride 0x88, stable)
-
+// Section fields - 0x88 stride, stable across all versions.
+// kContentType holds ld::ContentType values (NOT AtomKind).
 namespace section {
     inline constexpr size_t kStride      = 0x88;
     inline constexpr size_t kNamePtr     = 0x00;
@@ -151,7 +280,7 @@ namespace section {
     inline constexpr size_t kSegNamePtr  = 0x10;
     inline constexpr size_t kSegNameLen  = 0x18;
     inline constexpr size_t kContentType = 0x2C;
-    inline constexpr size_t kAlignment   = 0x30;  // u16: alignment power (ldrh)
+    inline constexpr size_t kAlignment   = 0x30;  // u16 alignment power
     inline constexpr size_t kAddress     = 0x38;
     inline constexpr size_t kSize        = 0x40;
     inline constexpr size_t kFileOffset  = 0x48;
@@ -159,83 +288,92 @@ namespace section {
     inline constexpr size_t kAtomsEnd    = 0x68;
     inline constexpr size_t kSectionRO   = 0x78;
     inline constexpr size_t kSectionIdx  = 0x80;
-
-    // NOTE: the contentType field at +0x2C stores Atom ContentType values
-    // (ld::ContentType enum), NOT AtomKind values. Use ContentType::kGot,
-    // ContentType::kStub, etc. for section type comparisons.
 }
 
-// SectionRO_1 - inline metadata from .o files (0x2C bytes)
-
+// SectionRO_1 - inline metadata from .o files (0x2C bytes).
 namespace SectionRO {
-    inline constexpr size_t kAlignment   = 0x00;  // u32: alignment power
-    inline constexpr size_t kContentType = 0x04;  // u32: ContentType enum value
+    inline constexpr size_t kAlignment   = 0x00;  // u32 alignment power
+    inline constexpr size_t kContentType = 0x04;  // u32 ContentType
     inline constexpr size_t kSegName     = 0x08;  // char[18]
     inline constexpr size_t kSectName    = 0x1A;  // char[18]
     inline constexpr size_t kSize        = 0x2C;
 }
 
-// segment field offsets (ld-1115 stride 0x50, ld-1221+ stride 0x58).
-// name + vm fields stable; sections vector is version-dependent.
-
+// Segment fields - stride 0x50 (ld-1115) or 0x58 (1221+). Name and VM fields
+// are stable; sections vector offset is version-dependent.
 namespace segment {
     inline constexpr size_t kNamePtr      = 0x00;
     inline constexpr size_t kNameLen      = 0x08;
-    inline constexpr size_t kVMAddr       = 0x10;  // uint64: virtual memory address
-    inline constexpr size_t kVMSize       = 0x18;  // uint64: aligned virtual memory size
-    inline constexpr size_t kFileOff      = 0x20;  // uint32: file offset
-    inline constexpr size_t kFileSize     = 0x24;  // uint32: file size
-    inline constexpr size_t kInitProt     = 0x2C;  // uint8: VM_PROT (e.g. 5=RX, 3=RW)
-    inline constexpr size_t kMaxProt      = 0x2D;  // uint8: VM_PROT
-    inline constexpr size_t kSegmentOrder = 0x30;  // u32: sort key
-    inline constexpr size_t kFixedAddr   = 0x38;  // u8: fixed-address flag (ld-1221+ only)
-    // sections vector at +0x38/+0x40 (ld-1115) or +0x40/+0x48 (ld-1221+)
+    inline constexpr size_t kVMAddr       = 0x10;
+    inline constexpr size_t kVMSize       = 0x18;
+    inline constexpr size_t kFileOff      = 0x20;
+    inline constexpr size_t kFileSize     = 0x24;
+    inline constexpr size_t kInitProt     = 0x2C;  // VM_PROT (5=RX, 3=RW)
+    inline constexpr size_t kMaxProt      = 0x2D;  // VM_PROT
+    inline constexpr size_t kSegmentOrder = 0x30;  // u32 sort key
+    inline constexpr size_t kFixedAddr    = 0x38;  // u8, ld-1221+ only
+    // Sections vector: +0x38/+0x40 (1115) or +0x40/+0x48 (1221+).
 }
 
-// LayoutExecutable fields
-
+// ld-1115 legacy LayoutExecutable offsets. Do NOT use for new code on
+// ld-1221+ - those versions inherit LayoutLinkedImage with completely
+// different offsets. Prefer the layout* fields of LayoutConstants.
 namespace layout {
-    inline constexpr size_t kOptions      = 0x08;
-    inline constexpr size_t kConsolidator = 0x108;
+    inline constexpr size_t kOptions         = 0x08;
+    inline constexpr size_t kConsolidator    = 0x108;
     inline constexpr size_t kSegmentsBegin   = 0x120;
     inline constexpr size_t kSegmentsEnd     = 0x128;
     inline constexpr size_t kSegmentsCapacity = 0x130;
-    inline constexpr size_t kArch         = 0x188;
+    inline constexpr size_t kArch            = 0x188;
 }
 
-// LinkeditBuilder fields
-
+// LinkeditBuilder fields. kLayout is the primary navigation entry point
+// (read via builderGetLayout); the others are informational.
 namespace builder {
-    inline constexpr size_t kOptions      = 0x00;
-    inline constexpr size_t kArch         = 0x08;
-    inline constexpr size_t kLayout       = 0x10;  // LayoutExecutable* - stable
-    inline constexpr size_t kAtomGroups   = 0x18;
-    inline constexpr size_t kPlacement    = 0x20;
-    inline constexpr size_t kSegmentsPtr  = 0x48;
-    inline constexpr size_t kDylibMapping = 0x50;
-    inline constexpr size_t kIndirectBase = 0x58;
+    inline constexpr size_t kOptions       = 0x00;
+    inline constexpr size_t kArch          = 0x08;
+    inline constexpr size_t kLayout        = 0x10;
+    inline constexpr size_t kAtomGroups    = 0x18;
+    inline constexpr size_t kPlacement     = 0x20;
+    inline constexpr size_t kSegmentsPtr   = 0x48;
+    inline constexpr size_t kDylibMapping  = 0x50;
+    inline constexpr size_t kIndirectBase  = 0x58;
     inline constexpr size_t kIndirectCount = 0x60;
 }
 
-// AtomPlacement (Atom+0x10)
-
+// AtomPlacement (Atom+0x10).
 namespace placement {
     inline constexpr size_t kOffset       = 0x00;
     inline constexpr size_t kSectionIndex = 0x0C;
 }
 
-// navigation helpers
+// Navigation helpers.
 
 inline const void *builderGetLayout(const void *bldr) {
     return readPtr(bldr, builder::kLayout);
 }
 
-inline const uint8_t *layoutSegmentsBegin(const void *lay) {
-    return static_cast<const uint8_t *>(readPtr(lay, layout::kSegmentsBegin));
+// Version-aware segment vector accessors.
+inline const uint8_t *layoutSegmentsBegin(const void *lay,
+                                          const LayoutConstants &lc) {
+    if (!lay || !lc.valid || lc.layoutSegmentsBegin == 0) return nullptr;
+    return static_cast<const uint8_t *>(readPtr(lay, lc.layoutSegmentsBegin));
 }
 
-inline const uint8_t *layoutSegmentsEnd(const void *lay) {
-    return static_cast<const uint8_t *>(readPtr(lay, layout::kSegmentsEnd));
+inline const uint8_t *layoutSegmentsEnd(const void *lay,
+                                        const LayoutConstants &lc) {
+    if (!lay || !lc.valid || lc.layoutSegmentsEnd == 0) return nullptr;
+    return static_cast<const uint8_t *>(readPtr(lay, lc.layoutSegmentsEnd));
+}
+
+inline OptionsPtr layoutOptions(const void *lay, const LayoutConstants &lc) {
+    if (!lay || !lc.valid) return nullptr;
+    return readPtr(lay, lc.layoutOptionsRef);
+}
+
+inline ConsolidatorPtr layoutConsolidator(const void *lay, const LayoutConstants &lc) {
+    if (!lay || !lc.valid) return nullptr;
+    return readPtr(lay, lc.layoutConsolidatorRef);
 }
 
 inline const char *segmentName(const void *seg) {
@@ -282,7 +420,7 @@ inline AtomPtr const *sectionAtomsEnd(const void *sec) {
     return static_cast<AtomPtr const *>(readPtr(sec, section::kAtomsEnd));
 }
 
-// segment field accessors
+// Segment field accessors.
 
 inline uint64_t segmentVMAddr(const void *seg) {
     return readU64(seg, segment::kVMAddr);
@@ -308,7 +446,7 @@ inline uint8_t segmentMaxProt(const void *seg) {
     return readU8(seg, segment::kMaxProt);
 }
 
-// segment name matching
+// Segment name matching.
 
 inline bool segmentNameMatches(const void *seg, const char *name, size_t nameLen) {
     size_t segLen = static_cast<size_t>(readU64(seg, segment::kNameLen));
@@ -316,7 +454,7 @@ inline bool segmentNameMatches(const void *seg, const char *name, size_t nameLen
     return memcmp(segmentName(seg), name, nameLen) == 0;
 }
 
-// fast path for 6-char names (__DATA, __TEXT) - avoids memcmp
+// Fast path for 6-char names (__DATA, __TEXT) - no memcmp.
 inline bool segmentNameIs(const void *seg, const char (&name)[7]) {
     const char *n = segmentName(seg);
     if (!n) return false;
@@ -335,14 +473,14 @@ inline bool sectionNameIs(const void *sec, const char *name, size_t nameLen) {
     return memcmp(sectionName(sec), name, nameLen) == 0;
 }
 
-// find a section by segment + section name
-
+// Find a section by segment + section name.
 inline const void *findSection(const void *layoutExe,
                                const LayoutConstants &lc,
                                const char *segName, size_t segNameLen,
                                const char *sectName, size_t sectNameLen) {
-    const uint8_t *segBegin = layoutSegmentsBegin(layoutExe);
-    const uint8_t *segEnd   = layoutSegmentsEnd(layoutExe);
+    const uint8_t *segBegin = layoutSegmentsBegin(layoutExe, lc);
+    const uint8_t *segEnd   = layoutSegmentsEnd(layoutExe, lc);
+    if (!segBegin || !segEnd) return nullptr;
 
     for (const uint8_t *seg = segBegin; seg < segEnd; seg += lc.segmentStride) {
         if (!segmentNameMatches(seg, segName, segNameLen)) continue;
@@ -357,8 +495,6 @@ inline const void *findSection(const void *layoutExe,
     }
     return nullptr;
 }
-
-// convenience overloads
 
 inline const void *findSection(const void *layoutExe,
                                const LayoutConstants &lc,
@@ -375,16 +511,16 @@ inline const void *findSection(const void *layoutExe,
                        sectName, strlen(sectName));
 }
 
-// validation - call once at hook entry before navigating.
-// returns false if the pointers look wrong (version mismatch, etc.).
+// Sanity check - call at hook entry before navigating; returns false on
+// any plausibility failure (null, version mismatch, segment count OOB).
 inline bool validateBuilder(const void *bldr, const LayoutConstants &lc) {
     if (!bldr || !lc.valid) return false;
 
     const void *lay = builderGetLayout(bldr);
     if (!lay) return false;
 
-    const uint8_t *segBegin = layoutSegmentsBegin(lay);
-    const uint8_t *segEnd   = layoutSegmentsEnd(lay);
+    const uint8_t *segBegin = layoutSegmentsBegin(lay, lc);
+    const uint8_t *segEnd   = layoutSegmentsEnd(lay, lc);
     if (!segBegin || !segEnd || segBegin > segEnd) return false;
 
     size_t segCount = (segEnd - segBegin) / lc.segmentStride;
@@ -393,8 +529,8 @@ inline bool validateBuilder(const void *bldr, const LayoutConstants &lc) {
     return true;
 }
 
-// fixup target resolution - mirrors directTargetNoFollow from Fixup.cpp
-
+// Mirrors Fixup.cpp's directTargetNoFollow: returns the raw target atom
+// without following alias chains (see resolveFixupTargetFollowAliases).
 inline AtomPtr resolveFixupTarget(const Fixup &f, AtomPtr containingAtom,
                                   const LayoutConstants &lc) {
     const void *file = atomFile(containingAtom);
@@ -439,7 +575,7 @@ inline AtomPtr resolveFixupTarget(const Fixup &f, AtomPtr containingAtom,
     return pBegin[targetIdx];
 }
 
-// same as above, but follows alias chains via atom+0x18
+// Same as resolveFixupTarget, but walks alias chains via atom+0x18.
 inline AtomPtr resolveFixupTargetFollowAliases(const Fixup &f,
                                                AtomPtr containingAtom,
                                                const LayoutConstants &lc) {
@@ -450,6 +586,155 @@ inline AtomPtr resolveFixupTargetFollowAliases(const Fixup &f,
         target = next;
     }
     return target;
+}
+
+// DynamicAtomFile typed vector accessors. Element strides match the
+// sizeof() of the Span<T> element type; see LinkEdit.h.
+inline Span<LinkerOption> dynamicFileLinkerOptions(const void *file,
+                                                   const LayoutConstants &lc) {
+    if (!file || !lc.valid || lc.dynamicFileLinkerOptions == 0) return {};
+    return readSpan<LinkerOption>(file,
+                                  lc.dynamicFileLinkerOptions,
+                                  lc.dynamicFileLinkerOptions + 8);
+}
+
+inline Span<LargeAddend> dynamicFileLargeAddends(const void *file,
+                                                 const LayoutConstants &lc) {
+    if (!file || !lc.valid || lc.dynamicFileLargeAddends == 0) return {};
+    return readSpan<LargeAddend>(file,
+                                 lc.dynamicFileLargeAddends,
+                                 lc.dynamicFileLargeAddends + 8);
+}
+
+inline Span<uint64_t> dynamicFileLOHs(const void *file,
+                                      const LayoutConstants &lc) {
+    if (!file || !lc.valid || lc.dynamicFileFileLOHs == 0) return {};
+    return readSpan<uint64_t>(file,
+                              lc.dynamicFileFileLOHs,
+                              lc.dynamicFileFileLOHs + 8);
+}
+
+// Pointer-element vector (std::vector<const AltFileInfo*>). Opaque.
+inline Span<const void *> dynamicFileAltFileInfos(const void *file,
+                                                  const LayoutConstants &lc) {
+    if (!file || !lc.valid || lc.dynamicFileAltFileInfos == 0) return {};
+    return readSpan<const void *>(file,
+                                  lc.dynamicFileAltFileInfos,
+                                  lc.dynamicFileAltFileInfos + 8);
+}
+
+// Options version-aware flag accessors.
+
+inline bool optionsDeadStripDylibs(OptionsPtr opts, const LayoutConstants &lc) {
+    if (!lc.valid) return false;
+    return optionsReadFlag(opts, lc.optionsDeadStripDylibs);
+}
+
+inline void setOptionsDeadStripDylibs(MutableOptionsPtr opts,
+                                      const LayoutConstants &lc,
+                                      bool enable) {
+    if (!lc.valid) return;
+    optionsWriteFlag(opts, lc.optionsDeadStripDylibs, enable);
+}
+
+inline bool optionsDeadStrip(OptionsPtr opts, const LayoutConstants &lc) {
+    if (!lc.valid) return false;
+    return optionsReadFlag(opts, lc.optionsDeadStrip);
+}
+
+inline void setOptionsDeadStrip(MutableOptionsPtr opts,
+                                const LayoutConstants &lc,
+                                bool enable) {
+    if (!lc.valid) return;
+    optionsWriteFlag(opts, lc.optionsDeadStrip, enable);
+}
+
+inline bool optionsMergeZeroFillSections(OptionsPtr opts, const LayoutConstants &lc) {
+    if (!lc.valid) return false;
+    return optionsReadFlag(opts, lc.optionsMergeZeroFillSections);
+}
+
+// Optimizations sub-struct base for ld-1221+. Returns nullptr on ld-1115
+// (flat layout) or any invalid version.
+inline const void *optionsOptimizations(OptionsPtr opts,
+                                        const LayoutConstants &lc) {
+    if (!opts || !lc.valid || lc.optionsOptimizationsBase == 0) return nullptr;
+    return static_cast<const uint8_t *>(opts) + lc.optionsOptimizationsBase;
+}
+
+// Consolidator version-aware accessors.
+
+inline OptionsPtr consolidatorOptions(ConsolidatorPtr cons,
+                                      const LayoutConstants &lc) {
+    if (!cons || !lc.valid) return nullptr;
+    return readPtr(cons, lc.consolidatorOptions);
+}
+
+// Input dylib scratch vector - populated by activateLibraries() before
+// buildDylibMapping runs. Elements are `ld::Dylib*`.
+inline const void *const *consolidatorInputDylibsBegin(ConsolidatorPtr cons,
+                                                       const LayoutConstants &lc) {
+    if (!cons || !lc.valid) return nullptr;
+    return static_cast<const void *const *>(
+        readPtr(cons, lc.consolidatorInputDylibsBegin));
+}
+
+inline const void *const *consolidatorInputDylibsEnd(ConsolidatorPtr cons,
+                                                     const LayoutConstants &lc) {
+    if (!cons || !lc.valid || lc.consolidatorInputDylibsEnd == 0) return nullptr;
+    return static_cast<const void *const *>(
+        readPtr(cons, lc.consolidatorInputDylibsEnd));
+}
+
+// Output dylib vector - populated by buildDylibMapping after the
+// erase-remove filter. Feeds LC_LOAD_DYLIB emission. Elements are
+// DylibLoadInfo value-types; iterate with dylibLoadInfoStride().
+inline const void *const *consolidatorOutputDylibsBegin(ConsolidatorPtr cons,
+                                                        const LayoutConstants &lc) {
+    if (!cons || !lc.valid || lc.consolidatorOutputDylibsBegin == 0) return nullptr;
+    return static_cast<const void *const *>(
+        readPtr(cons, lc.consolidatorOutputDylibsBegin));
+}
+
+inline const void *const *consolidatorOutputDylibsEnd(ConsolidatorPtr cons,
+                                                      const LayoutConstants &lc) {
+    if (!cons || !lc.valid || lc.consolidatorOutputDylibsEnd == 0) return nullptr;
+    return static_cast<const void *const *>(
+        readPtr(cons, lc.consolidatorOutputDylibsEnd));
+}
+
+inline size_t consolidatorInputDylibCount(ConsolidatorPtr cons,
+                                          const LayoutConstants &lc) {
+    auto begin = consolidatorInputDylibsBegin(cons, lc);
+    auto end   = consolidatorInputDylibsEnd(cons, lc);
+    if (!begin || !end || end < begin) return 0;
+    return static_cast<size_t>(end - begin);
+}
+
+inline size_t consolidatorOutputDylibCount(ConsolidatorPtr cons,
+                                           const LayoutConstants &lc) {
+    auto begin = consolidatorOutputDylibsBegin(cons, lc);
+    auto end   = consolidatorOutputDylibsEnd(cons, lc);
+    if (!begin || !end || end < begin) return 0;
+    return static_cast<size_t>(end - begin);
+}
+
+// Structural sanity check - call at hook entry before mutating state.
+// Rejects null, invalid/classic version, null Options*, or implausible
+// input dylib vector (begin > end, count > 100k).
+inline bool validateConsolidator(ConsolidatorPtr cons,
+                                 const LayoutConstants &lc) {
+    if (!cons || !lc.valid) return false;
+
+    OptionsPtr opts = consolidatorOptions(cons, lc);
+    if (!opts) return false;
+
+    auto begin = consolidatorInputDylibsBegin(cons, lc);
+    auto end   = consolidatorInputDylibsEnd(cons, lc);
+    if (!begin || !end || end < begin) return false;
+    if (static_cast<size_t>(end - begin) > 100000) return false;
+
+    return true;
 }
 
 } // namespace ld
