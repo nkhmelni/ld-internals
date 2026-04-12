@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Nikita Hmelnitkii. MIT License - see LICENSE.
 //
-// Version.h - runtime detection of the linker family and version by
-// scanning the loaded ld image for its embedded "PROJECT:ld..." string.
+// Version.h - linker family and version detection.
+// Scans dyld images for the "PROJECT:ld-NNNN.N.N" marker embedded in
+// every Apple linker binary.
 
 #ifndef LD_VERSION_H
 #define LD_VERSION_H
@@ -18,8 +19,8 @@ namespace ld {
 
 enum class Family : uint8_t {
     Unknown,
-    Prime,   // ld-prime (ld-1100+), closed-source
-    Classic, // ld64, open-source-based
+    Prime,   // ld-prime (ld-1100+)
+    Classic, // ld64
 };
 
 struct LinkerVersion {
@@ -47,13 +48,42 @@ struct LinkerVersion {
 
 namespace version {
     inline constexpr LinkerVersion Prime_1115 = {Family::Prime, 1115, 7, 3};
+    inline constexpr LinkerVersion Prime_1167 = {Family::Prime, 1167, 5, 0};
     inline constexpr LinkerVersion Prime_1221 = {Family::Prime, 1221, 4, 0};
     inline constexpr LinkerVersion Prime_1230 = {Family::Prime, 1230, 1, 0};
     inline constexpr LinkerVersion Prime_1266 = {Family::Prime, 1266, 8, 0};
     inline constexpr LinkerVersion ld64_820   = {Family::Classic, 820, 1, 0};
 }
 
-// Parse "ld-1115.7.3" or "ld64-820.1" into a LinkerVersion.
+inline bool isKnownVersion(const LinkerVersion &v) {
+    return v == version::Prime_1115
+        || v == version::Prime_1167
+        || v == version::Prime_1221
+        || v == version::Prime_1230
+        || v == version::Prime_1266
+        || v == version::ld64_820;
+}
+
+// "ld-1221.4" / "ld64-820.1" / "unknown". Buffer must be >= 24.
+inline const char *versionLabel(const LinkerVersion &v, char *buf, size_t bufLen) {
+    if (!buf || bufLen < 24) return "";
+    if (v.family == Family::Classic) {
+        snprintf(buf, bufLen, "ld64-%u.%u", v.major, v.minor);
+    } else if (v.family == Family::Prime) {
+        if (v.patch != 0)
+            snprintf(buf, bufLen, "ld-%u.%u.%u", v.major, v.minor, v.patch);
+        else
+            snprintf(buf, bufLen, "ld-%u.%u", v.major, v.minor);
+    } else {
+        snprintf(buf, bufLen, "unknown");
+    }
+    return buf;
+}
+
+inline bool isPrimeAtLeast(const LinkerVersion &v, uint32_t major) {
+    return v.isPrime() && v.major >= major;
+}
+
 inline LinkerVersion parseProjectString(const char *s) {
     LinkerVersion v = {Family::Unknown, 0, 0, 0};
     if (!s) return v;
@@ -87,7 +117,6 @@ inline LinkerVersion parseProjectString(const char *s) {
     return v;
 }
 
-// Search a bounded region for "PROJECT:ld..." and parse the version.
 inline LinkerVersion findProjectString(const uint8_t *start, const uint8_t *end) {
     static const char needle[] = "PROJECT:ld";
     constexpr size_t nlen = sizeof(needle) - 1;
@@ -125,8 +154,6 @@ inline LinkerVersion findProjectString(const uint8_t *start, const uint8_t *end)
     return {Family::Unknown, 0, 0, 0};
 }
 
-// Detect the linker version from the running process. Single-threaded
-// only (safe inside LinkeditBuilder::build or any hook installed there).
 inline LinkerVersion detectVersion() {
     const uint32_t imageCount = _dyld_image_count();
 
@@ -135,8 +162,7 @@ inline LinkerVersion detectVersion() {
         if (!name) return {Family::Unknown, 0, 0, 0};
         size_t len = strlen(name);
 
-        // Basename filter: "ld", "ld-*", "ld64*", "ld.sh". Anything else
-        // is rejected up-front to avoid scanning unrelated images.
+        // Only scan images whose basename looks like a linker.
         const char *slash = nullptr;
         for (size_t k = 0; k < len; ++k) if (name[k] == '/') slash = name + k;
         const char *base = slash ? slash + 1 : name;
@@ -164,7 +190,7 @@ inline LinkerVersion detectVersion() {
                 const auto *seg =
                     reinterpret_cast<const struct segment_command_64 *>(lc);
 
-                // Only __TEXT and __DATA carry the PROJECT string.
+                // PROJECT string is embedded in __TEXT or __DATA.
                 if (strncmp(seg->segname, "__TEXT", 6) != 0
                     && strncmp(seg->segname, "__DATA", 6) != 0) {
                     lc = reinterpret_cast<const struct load_command *>(
@@ -186,7 +212,7 @@ inline LinkerVersion detectVersion() {
         return {Family::Unknown, 0, 0, 0};
     };
 
-    // Fast path: image 0 is the main executable (the ld binary itself).
+    // Image 0 is the main executable; try it first.
     if (imageCount > 0) {
         LinkerVersion v = checkImage(0);
         if (v.family != Family::Unknown) return v;

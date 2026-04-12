@@ -1,21 +1,16 @@
 // Copyright (c) 2026 Nikita Hmelnitkii. MIT License - see LICENSE.
 //
-// Mach.h - common mach_o types for ld-prime and ld64 classic: Platform,
-// Architecture, Version32, PlatformVersion, OutputKind, BuildTool, CSMagic.
-// Values match ld64's PlatformSupport.h / Options.h and <mach-o/loader.h>
-// so linker-populated structures can be read without translation.
+// Mach.h - Mach-O constants. Values match <mach-o/loader.h>.
 
 #ifndef LD_MACH_H
 #define LD_MACH_H
 
 #include <cstdint>
 
-#include <mach/machine.h>  // cpu_type_t, cpu_subtype_t, CPU_TYPE_*, CPU_SUBTYPE_*
+#include <mach/machine.h>
 
 namespace ld {
 
-// Matches <mach-o/loader.h> PLATFORM_* macros. ABI-stable; new platforms
-// are appended by Apple. Includes every platform through the exclave family.
 enum class Platform : uint32_t {
     unknown                = 0,
     macOS                  = 1,
@@ -23,7 +18,7 @@ enum class Platform : uint32_t {
     tvOS                   = 3,
     watchOS                = 4,
     bridgeOS               = 5,
-    macCatalyst            = 6,    // was `iOSMac` in older ld64 source
+    macCatalyst            = 6,
     iOS_simulator          = 7,
     tvOS_simulator         = 8,
     watchOS_simulator      = 9,
@@ -42,7 +37,7 @@ enum class Platform : uint32_t {
     watchOS_exclaveKit     = 22,
     visionOS_exclaveCore   = 23,
     visionOS_exclaveKit    = 24,
-    // Internal sentinels - not written to LC_BUILD_VERSION.
+    // Sentinels - not written to LC_BUILD_VERSION.
     freestanding           = 100,
     any                    = 0xFFFFFFFF,
 };
@@ -105,8 +100,7 @@ inline bool platformIsExclave(Platform p) {
     }
 }
 
-// Packed 32-bit version: XXXX.YY.ZZ -> 0xXXXXYYZZ. Used for minVersion,
-// sdkVersion, LC_ID_DYLIB compat/current versions, LC_BUILD_VERSION.
+// Packed XXXX.YY.ZZ -> 0xXXXXYYZZ. Used by LC_ID_DYLIB, LC_BUILD_VERSION.
 struct Version32 {
     uint32_t raw;
 
@@ -129,9 +123,9 @@ struct Version32 {
 
 static_assert(sizeof(Version32) == 4, "");
 
-// Matches ld64 ld::PlatformVersion. operator== compares platform only
-// (ld64 uses std::set<PlatformVersion> keyed by platform).
+// operator== compares platform only (platform is the set key).
 struct PlatformVersion {
+
     Platform  platform;
     Version32 minVersion;
     Version32 sdkVersion;
@@ -147,8 +141,6 @@ struct PlatformVersion {
     constexpr bool operator< (const PlatformVersion &o) const { return platform <  o.platform; }
 };
 
-// POD wrapper around cpu_type_t / cpu_subtype_t, matching ld-prime's
-// `mach_o::Architecture` singletons.
 struct Architecture {
     cpu_type_t    cpuType;
     cpu_subtype_t cpuSubtype;
@@ -160,14 +152,13 @@ struct Architecture {
     constexpr bool isX86_64()   const { return cpuType == CPU_TYPE_X86_64; }
     constexpr bool isI386()     const { return cpuType == CPU_TYPE_I386; }
     constexpr bool isArm32()    const { return cpuType == CPU_TYPE_ARM; }
-    // PAC ABI version lives in the high byte; mask out before comparing.
+    // PAC ABI version lives in the high byte.
     constexpr bool isArm64e() const {
         return cpuType == CPU_TYPE_ARM64
             && (cpuSubtype & ~CPU_SUBTYPE_MASK) == CPU_SUBTYPE_ARM64E;
     }
 };
 
-// Canonical singletons. Match ld64 src/abstraction/MachOFileAbstraction.hpp.
 namespace arch {
     inline constexpr Architecture kArm64   = { CPU_TYPE_ARM64,  CPU_SUBTYPE_ARM64_ALL,  "arm64",   "arm64"   };
     inline constexpr Architecture kArm64e  = { CPU_TYPE_ARM64,  CPU_SUBTYPE_ARM64E,     "arm64e",  "arm64e"  };
@@ -179,7 +170,7 @@ namespace arch {
     inline constexpr Architecture kArmv7k  = { CPU_TYPE_ARM, CPU_SUBTYPE_ARM_V7K, "armv7k", "thumbv7k" };
 }
 
-// Round-trip from raw (cputype, cpusubtype). Returns nullptr if unknown.
+// (cputype, cpusubtype) -> Architecture*; nullptr on unknown.
 inline const Architecture *architectureFromMachO(cpu_type_t t, cpu_subtype_t s) {
     const cpu_subtype_t base = s & ~CPU_SUBTYPE_MASK;
     switch (t) {
@@ -199,10 +190,9 @@ inline const Architecture *architectureFromMachO(cpu_type_t t, cpu_subtype_t s) 
     }
 }
 
-// Matches classic ld64 Options::OutputKind; ld-prime preserves the values.
 enum OutputKind : uint32_t {
     kDynamicExecutable = 0,   // MH_EXECUTE + dyld
-    kStaticExecutable  = 1,   // MH_EXECUTE, no dyld
+    kStaticExecutable  = 1,
     kDynamicLibrary    = 2,   // MH_DYLIB
     kDynamicBundle     = 3,   // MH_BUNDLE
     kObjectFile        = 4,   // MH_OBJECT
@@ -225,7 +215,7 @@ inline const char *outputKindName(OutputKind k) {
     return "unknown";
 }
 
-// LC_BUILD_VERSION tool record. Matches <mach-o/loader.h> TOOL_*.
+// LC_BUILD_VERSION tool record (TOOL_* in <mach-o/loader.h>).
 enum class BuildTool : uint32_t {
     unknown = 0,
     clang   = 1,
@@ -240,8 +230,6 @@ struct BuildToolVersion {
 };
 static_assert(sizeof(BuildToolVersion) == 8, "");
 
-// Embedded code-signature magic constants. Subset of Security/CSCommon.h
-// for contexts where the SDK header is unavailable.
 enum class CSMagic : uint32_t {
     CodeDirectory     = 0xfade0c02,
     EmbeddedSignature = 0xfade0cc0,
@@ -262,6 +250,91 @@ enum class CSHashType : uint8_t {
     sha384       = 4,
     sha512       = 5,
 };
+
+// Load-command type IDs. Names differ from <mach-o/loader.h> LC_* macros
+// to let both coexist in one TU; numeric values match. Bit 0x80000000 is
+// LC_REQ_DYLD - dyld fails the load when an unknown command has it set.
+enum class LoadCmd : uint32_t {
+    ReqDyldFlag          = 0x80000000u,
+
+    Segment64            = 0x19,
+    Symtab               = 0x02,
+    Dysymtab             = 0x0B,
+    LoadDylib            = 0x0C,
+    IdDylib              = 0x0D,
+    LoadDylinker         = 0x0E,
+    IdDylinker           = 0x0F,
+    PreboundDylib        = 0x10,
+    Routines64           = 0x1A,
+    SubFramework         = 0x12,
+    SubClient            = 0x14,
+    SubUmbrella          = 0x13,
+    SubLibrary           = 0x15,
+    TwolevelHints        = 0x16,
+    Uuid                 = 0x1B,
+    CodeSignature        = 0x1D,
+    SegmentSplitInfo     = 0x1E,
+    LazyLoadDylib        = 0x20,
+    EncryptionInfo64     = 0x2C,
+    FunctionStarts       = 0x26,
+    DataInCode           = 0x29,
+    SourceVersion        = 0x2A,
+    DylibCodeSignDrs     = 0x2B,
+    LinkerOption         = 0x2D,
+    Note                 = 0x31,
+    BuildVersion         = 0x32,
+    Main                 = 0x28u | 0x80000000u,
+    LoadWeakDylib        = 0x18u | 0x80000000u,
+    ReexportDylib        = 0x1Fu | 0x80000000u,
+    LoadUpwardDylib      = 0x23u | 0x80000000u,
+    Rpath                = 0x1Cu | 0x80000000u,
+    DyldInfo             = 0x22,
+    DyldInfoOnly         = 0x22u | 0x80000000u,
+    DyldExportsTrie      = 0x33u | 0x80000000u,
+    DyldChainedFixups    = 0x34u | 0x80000000u,
+    FilesetEntry         = 0x35u | 0x80000000u,
+    AtomInfo             = 0x36,
+    VersionMinMacosx     = 0x24,
+    VersionMinIphoneos   = 0x25,
+    VersionMinWatchos    = 0x30,
+    VersionMinTvos       = 0x2F,
+};
+
+inline constexpr bool loadCmdRequiresDyld(uint32_t cmd) {
+    return (cmd & 0x80000000u) != 0;
+}
+inline constexpr uint32_t loadCmdStripFlags(uint32_t cmd) {
+    return cmd & 0x7FFFFFFFu;
+}
+
+// True for LoadDylib / LoadWeakDylib / ReexportDylib / LoadUpwardDylib /
+// LazyLoadDylib. Works on raw LC_* macros or LoadCmd enum values.
+inline constexpr bool loadCmdIsDylib(uint32_t cmd) {
+    const uint32_t c = loadCmdStripFlags(cmd);
+    return c == static_cast<uint32_t>(LoadCmd::LoadDylib)
+        || c == loadCmdStripFlags(static_cast<uint32_t>(LoadCmd::LoadWeakDylib))
+        || c == loadCmdStripFlags(static_cast<uint32_t>(LoadCmd::ReexportDylib))
+        || c == loadCmdStripFlags(static_cast<uint32_t>(LoadCmd::LoadUpwardDylib))
+        || c == static_cast<uint32_t>(LoadCmd::LazyLoadDylib);
+}
+
+// Equivalent DylibAttr bit; 0 = regular LoadDylib.
+inline constexpr uint8_t loadCmdToDylibAttrBit(uint32_t cmd) {
+    const uint32_t c = loadCmdStripFlags(cmd);
+    if (c == static_cast<uint32_t>(LoadCmd::LoadDylib))                               return 0x00;
+    if (c == loadCmdStripFlags(static_cast<uint32_t>(LoadCmd::LoadWeakDylib)))        return 0x01;
+    if (c == loadCmdStripFlags(static_cast<uint32_t>(LoadCmd::ReexportDylib)))        return 0x02;
+    if (c == loadCmdStripFlags(static_cast<uint32_t>(LoadCmd::LoadUpwardDylib)))      return 0x04;
+    return 0x00;
+}
+
+// VM protection bits (<mach/vm_prot.h>).
+namespace vmprot {
+    inline constexpr uint8_t kNone    = 0;
+    inline constexpr uint8_t kRead    = 1;
+    inline constexpr uint8_t kWrite   = 2;
+    inline constexpr uint8_t kExecute = 4;
+}
 
 } // namespace ld
 

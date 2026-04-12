@@ -1,18 +1,14 @@
 // Copyright (c) 2026 Nikita Hmelnitkii. MIT License - see LICENSE.
 //
-// Consolidator.h - ld::AtomFileConsolidator layout.
-//
-// Central resolve-phase state: Options*, input AtomFiles, passFiles, input
-// and output Dylib vectors. Allocated via `new(size, align=128)` in
-// Linker::run(). Invariant: `Consolidator + 0x00 = Options const*` across
-// every ld-prime version. Version-aware accessors live in Layout.h.
+// Consolidator.h - AtomFileConsolidator field offsets and DylibLoadInfo
+// record layout. Version-dependent offsets live in LayoutConstants.
 
 #ifndef LD_CONSOLIDATOR_H
 #define LD_CONSOLIDATOR_H
 
-#include "Atom.h"      // readPtr
+#include "Primitives.h"
 #include "Options.h"
-#include "Version.h"   // ld::LinkerVersion
+#include "Version.h"
 
 #include <cstddef>
 
@@ -21,78 +17,118 @@ namespace ld {
 using ConsolidatorPtr = const void *;
 using MutableConsolidatorPtr = void *;
 
-// AtomFileConsolidator fields stable across all ld-prime versions.
+// Stable top-of-struct fields.
 namespace consolidator {
-    inline constexpr size_t kOptionsPtr          = 0x000;  // canonical Options const*
-    inline constexpr size_t kOptionsPtrDuplicate = 0x080;  // back-pointer, diagnostic only
-    inline constexpr size_t kInputDylibsBegin    = 0x2F0;  // ld::Dylib* scratch vector
-    // Version-dependent fields live in LayoutConstants (Layout.h).
+    inline constexpr size_t kOptionsPtr          = 0x000;
+    inline constexpr size_t kOptionsPtrDuplicate = 0x080;
 }
 
-// buildDylibMapping filters the input scratch vector into a
-// std::vector<DylibLoadInfo>. Element is a value-type with version-dependent
-// stride - iterate via dylibLoadInfoStride(), not pointer arithmetic.
-//
-// Partial field map (verified in $_9<Dylib> and recursivePropagateWeakLink):
-//   +0x00 Dylib*            back-ptr to input dylib (holds install name)
-//   +0x08 Options const*    secondary back-ref
-//   +0x10 uint8_t            attributes: weak / reexport / upward bits
-//   +0x18 uint32_t           LC_LOAD_DYLIB ordinal (1-based)
+// Element slot in the input AtomFile pointer vector. Stride 8.
+namespace input_atomfile {
+    inline constexpr size_t kFilePtr = 0x00;
+    inline constexpr size_t kStride  = 0x08;
+}
+
+inline const void *inputAtomFilePtr(const void *slot) {
+    if (!slot) return nullptr;
+    const void *p;
+    __builtin_memcpy(&p, slot, sizeof(p));
+    return p;
+}
+
+// Output dylib record. One per LC_LOAD_DYLIB. Stride 0x50.
 namespace DylibLoadInfo {
-    inline constexpr size_t kSize_1115  = 0x38;  // 56 bytes
-    inline constexpr size_t kSize_1221  = 0x50;  // 80 bytes
-    inline constexpr size_t kDylibPtr   = 0x00;  // ld::Dylib*
-    inline constexpr size_t kOptionsPtr = 0x08;  // Options const*
-    inline constexpr size_t kAttributes = 0x10;  // u8 bitfield
-    inline constexpr size_t kOrdinal    = 0x18;  // u32 LC_LOAD_DYLIB ordinal
+    inline constexpr size_t kStride     = 0x50;
+    inline constexpr size_t kDylibPtr   = 0x00;
+    inline constexpr size_t kOptionsPtr = 0x08;
+    inline constexpr size_t kAttributes = 0x10;
+    inline constexpr size_t kOrdinal    = 0x18;
 }
 
-// Version-appropriate stride for iterating the output dylib vector.
-inline size_t dylibLoadInfoStride(const ld::LinkerVersion &v) {
-    return v.isPrime() && v.major >= 1200
-         ? DylibLoadInfo::kSize_1221
-         : DylibLoadInfo::kSize_1115;
+// DylibLoadInfo attribute flags at +0x10.
+enum class DylibAttr : uint8_t {
+    None           = 0x00,
+    Weak           = 0x01,  // emit LC_LOAD_WEAK_DYLIB
+    Reexport       = 0x02,  // emit LC_REEXPORT_DYLIB
+    Upward         = 0x04,  // emit LC_LOAD_UPWARD_DYLIB
+    Implicit       = 0x08,  // auto-linked, not explicit
+    DeadStrippable = 0x10,  // eligible for -dead_strip_dylibs
+};
+
+inline constexpr uint8_t operator|(DylibAttr a, DylibAttr b) {
+    return static_cast<uint8_t>(a) | static_cast<uint8_t>(b);
+}
+inline constexpr bool hasAttr(uint8_t raw, DylibAttr a) {
+    return (raw & static_cast<uint8_t>(a)) != 0;
 }
 
-// Per-version absolute offsets.
+// Currently 0x50 for all known versions.
+inline size_t dylibLoadInfoStride(const LinkerVersion &) {
+    return DylibLoadInfo::kStride;
+}
+
+inline const void *dylibLoadInfoDylib(const void *slot) {
+    return slot ? readPtr(slot, DylibLoadInfo::kDylibPtr) : nullptr;
+}
+inline OptionsPtr dylibLoadInfoOptions(const void *slot) {
+    return slot ? readPtr(slot, DylibLoadInfo::kOptionsPtr) : nullptr;
+}
+inline uint8_t dylibLoadInfoAttributesRaw(const void *slot) {
+    return slot ? readU8(slot, DylibLoadInfo::kAttributes) : 0;
+}
+inline uint32_t dylibLoadInfoOrdinal(const void *slot) {
+    return slot ? readU32(slot, DylibLoadInfo::kOrdinal) : 0;
+}
+
+inline bool dylibLoadInfoIsWeak(const void *slot)          { return hasAttr(dylibLoadInfoAttributesRaw(slot), DylibAttr::Weak); }
+inline bool dylibLoadInfoIsReexport(const void *slot)      { return hasAttr(dylibLoadInfoAttributesRaw(slot), DylibAttr::Reexport); }
+inline bool dylibLoadInfoIsUpward(const void *slot)        { return hasAttr(dylibLoadInfoAttributesRaw(slot), DylibAttr::Upward); }
+inline bool dylibLoadInfoIsImplicit(const void *slot)      { return hasAttr(dylibLoadInfoAttributesRaw(slot), DylibAttr::Implicit); }
+inline bool dylibLoadInfoIsDeadStrippable(const void *slot){ return hasAttr(dylibLoadInfoAttributesRaw(slot), DylibAttr::DeadStrippable); }
+
+// Per-version Consolidator vector offsets.
 namespace consolidator_offsets {
 
     struct Prime_1115 {
-        static constexpr size_t kInputDylibsBegin  = 0x2F0;
-        static constexpr size_t kInputDylibsEnd    = 0x2F8;
-        static constexpr size_t kOutputDylibsBegin = 0x728;  // feeds LC_LOAD_DYLIB
-        static constexpr size_t kOutputDylibsEnd   = 0x730;
-        static constexpr size_t kOutputDylibsCap   = 0x738;
-        static constexpr size_t kTotalSize         = 0x800;
+        static constexpr size_t kInputAtomFilesBegin = 0x4A8;
+        static constexpr size_t kInputAtomFilesEnd   = 0x4B0;
+        static constexpr size_t kOutputDylibsBegin   = 0x728;
+        static constexpr size_t kOutputDylibsEnd     = 0x730;
+        static constexpr size_t kOutputDylibsCap     = 0x738;
     };
 
-    // ld-1221.4 / 1230.1 / 1266.8 - byte-identical.
+    // 1221 / 1230 / 1266 share this layout.
     struct Prime_1221Plus {
-        static constexpr size_t kInputDylibsBegin  = 0x2F0;
-        static constexpr size_t kInputDylibsEnd    = 0x300;
-        static constexpr size_t kOutputDylibsBegin = 0x7F0;  // feeds LC_LOAD_DYLIB
-        static constexpr size_t kOutputDylibsEnd   = 0x7F8;
-        static constexpr size_t kOutputDylibsCap   = 0x800;
+        static constexpr size_t kInputAtomFilesBegin = 0x4B8;
+        static constexpr size_t kInputAtomFilesEnd   = 0x4C0;
+        static constexpr size_t kOutputDylibsBegin   = 0x7F0;
+        static constexpr size_t kOutputDylibsEnd     = 0x7F8;
+        static constexpr size_t kOutputDylibsCap     = 0x800;
+    };
+
+    // 1167.5 -- inputAtomFiles matches 1221 but outputDylibs differs.
+    struct Prime_1167 {
+        static constexpr size_t kInputAtomFilesBegin = 0x4B8;
+        static constexpr size_t kInputAtomFilesEnd   = 0x4C0;
+        static constexpr size_t kOutputDylibsBegin   = 0x7B8;
+        static constexpr size_t kOutputDylibsEnd     = 0x7C0;
+        static constexpr size_t kOutputDylibsCap     = 0x7C8;
     };
 }
 
-// Canonical Options* loader (+0x00, stable across all versions).
 inline OptionsPtr consolidatorOptionsRaw(ConsolidatorPtr cons) {
-    if (!cons) return nullptr;
-    return readPtr(cons, consolidator::kOptionsPtr);
+    return cons ? readPtr(cons, consolidator::kOptionsPtr) : nullptr;
 }
 
-// Diagnostic-only alt path through the +0x80 duplicate slot.
+// Duplicate Options* at +0x80; both slots hold the same value.
 inline OptionsPtr consolidatorOptionsAltRaw(ConsolidatorPtr cons) {
-    if (!cons) return nullptr;
-    return readPtr(cons, consolidator::kOptionsPtrDuplicate);
+    return cons ? readPtr(cons, consolidator::kOptionsPtrDuplicate) : nullptr;
 }
 
 inline bool consolidatorOptionsPathsAgree(ConsolidatorPtr cons) {
     OptionsPtr a = consolidatorOptionsRaw(cons);
     if (!a) return false;
-    OptionsPtr b = consolidatorOptionsAltRaw(cons);
-    return a == b;
+    return a == consolidatorOptionsAltRaw(cons);
 }
 
 } // namespace ld
