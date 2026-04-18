@@ -16,44 +16,14 @@ namespace ld {
 using OptionsPtr = const void *;
 using MutableOptionsPtr = void *;
 
-// Optimizations sub-struct (ld-1167+). Offsets are relative to the
-// sub-struct base. Add LayoutConstants::optionsOptimizationsBase for
-// the absolute position within Options.
+// ld-1167+ Optimizations sub-struct. Offsets are relative to
+// LayoutConstants::optionsOptimizationsBase. Only empirically verified
+// fields are exposed; add more here after runtime binary-probe coverage.
 namespace Optimizations {
-
-    inline constexpr size_t kDeadStrip                   = 0x18;  // u16 - `-dead_strip`
-    inline constexpr size_t kLtoLibrarySet               = 0x1A;  // u16 - `-lto_library` present
-    inline constexpr size_t kDeadStripDylibs             = 0x1C;  // u16 - `-dead_strip_dylibs`
-    inline constexpr size_t kOrderInits                  = 0x1E;  // u16 - `-no_order_inits`
-    inline constexpr size_t kImplicitDylibs              = 0x20;  // u16 - `-no_implicit_dylibs`
-    inline constexpr size_t kAllowDeadDuplicates         = 0x22;  // u16 - `-allow_dead_duplicates`
-    inline constexpr size_t kMaxCodeDedupPassesSet       = 0x24;  // u16 - has_value
-    inline constexpr size_t kNoBranchIslands             = 0x26;  // u16 - `-no_branch_islands`
-    inline constexpr size_t kDtraceDof                   = 0x28;  // u16 - `-no_dtrace_dof`
-    inline constexpr size_t kDedupAllowObjcAddrRef       = 0x2A;  // u16
-    inline constexpr size_t kDedupAllowSwiftAddrRef      = 0x2C;  // u16
-    inline constexpr size_t kDedupAllowBlockLiteralRef   = 0x2E;  // u16
-    inline constexpr size_t kDedupAllowCppVtableRef      = 0x30;  // u16
-    inline constexpr size_t kDeduplicate                 = 0x32;  // u16 - `-deduplicate` / `-no_deduplicate`
-    inline constexpr size_t kMaxCodeDedupPassesValue     = 0x34;  // u32 - dword value
-    inline constexpr size_t kMergedLibrariesHookValue    = 0x3C;  // u32
-    inline constexpr size_t kAddMergeableDebugHook       = 0x3E;  // u16
-    inline constexpr size_t kMergeZeroFillSections       = 0x40;  // u16 - `-merge_zero_fill_sections`
-    inline constexpr size_t kDebugVariant                = 0x42;  // u16
-    inline constexpr size_t kRemoveSwiftReflection       = 0x44;  // u16
-    inline constexpr size_t kOrderFileVector             = 0x48;  // vector<> - std::vector begin ptr
-    inline constexpr size_t kLtoLibrary                  = 0xC0;  // CString (ptr, len)
-    inline constexpr size_t kObjectPathLto               = 0xD0;  // CString
-    inline constexpr size_t kCachePathLto                = 0xE0;  // CString
-    inline constexpr size_t kNoTreatLtoCrossrefs         = 0xF0;  // u16
-    inline constexpr size_t kPruneIntervalLtoValue       = 0xF4;  // u32
-    inline constexpr size_t kPruneIntervalLtoSet         = 0xF8;  // u8  - has_value
-    inline constexpr size_t kPruneAfterLtoValue          = 0xFC;  // u32
-    inline constexpr size_t kPruneAfterLtoSet            = 0x100; // u8
-    inline constexpr size_t kMaxRelCacheSizeLtoValue     = 0x104; // u32
-    inline constexpr size_t kMaxRelCacheSizeLtoSet       = 0x108; // u8
-    inline constexpr size_t kMcpu                        = 0x128; // CString
-    inline constexpr size_t kCacheDir                    = 0x138; // CString
+    inline constexpr size_t kDeadStrip              = 0x18;  // u16, -dead_strip
+    inline constexpr size_t kDeadStripDylibs        = 0x1C;  // u16, -dead_strip_dylibs
+    inline constexpr size_t kAllowDeadDuplicates    = 0x22;  // u16, -allow_dead_duplicates
+    inline constexpr size_t kMergeZeroFillSections  = 0x40;  // u16, -merge_zero_fill_sections
 }
 
 // Byte-granular flag access. Uses byte semantics to avoid clobbering
@@ -71,6 +41,30 @@ inline void optionsWriteFlag(MutableOptionsPtr opts, size_t offset, bool enable)
 // Per-version absolute Options offsets.
 namespace options_offsets {
 
+    // ld-1053.12. Densely-packed u16 flag array in Options::Optimizations
+    // sub-struct at +0x410. Option parser uses inline 8-byte immediate
+    // compares rather than strcmp. 17 halfwords span +0x411..+0x431.
+    struct Prime_1053 {
+        static constexpr size_t kOptimizationsBase          = 0x410;
+        static constexpr size_t kDeadStrip                  = 0x411;  // u16, set by -dead_strip
+        static constexpr size_t kAllowDeadDuplicates        = 0x413;  // u16, -allow_dead_duplicates
+        static constexpr size_t kDeadStripDylibs            = 0x415;  // u16, -dead_strip_dylibs
+        static constexpr size_t kOrderInits                 = 0x417;  // u16, cleared by -no_order_inits
+        static constexpr size_t kImplicitDylibs             = 0x419;  // u16, cleared by -no_implicit_dylibs
+        static constexpr size_t kNoZeroFillSections         = 0x41B;  // u16, cleared by -no_zero_fill_sections
+        static constexpr size_t kMergeZeroFillSections      = 0x41D;  // u16, -merge_zero_fill_sections
+        static constexpr size_t kNoBranchIslands            = 0x41F;  // u16, cleared by -no_branch_islands
+        static constexpr size_t kDtraceDof                  = 0x421;  // u16, cleared by -no_dtrace_dof
+        static constexpr size_t kDeduplicate                = 0x423;  // u16, cleared by -no_deduplicate
+        static constexpr size_t kObjcRelativeMethodLists    = 0x425;  // u16, -objc_relative_method_lists
+        static constexpr size_t kObjcStubsSmall             = 0x427;  // u16, -objc_stubs_small vs _fast
+        static constexpr size_t kNoObjcCategoryMerging      = 0x429;  // u16, cleared by -no_objc_category_merging
+        static constexpr size_t kMergedLibrariesHook        = 0x42B;  // u16, cleared by -no_merged_libraries_hook
+        static constexpr size_t kMaxCodeDedupPassesSet      = 0x42D;  // u16, paired-clear with kDeduplicate
+        static constexpr size_t kDebugVariant               = 0x42F;  // u16, -debug_variant
+        static constexpr size_t kRemoveSwiftReflection      = 0x431;  // u16, -remove_swift_reflection_metadata_sections
+    };
+
     // ld-1115.7.3 - flat layout, packed region +0x478..+0x4B6.
     struct Prime_1115 {
         static constexpr size_t kDeadStrip              = 0x480;  // u16
@@ -81,7 +75,7 @@ namespace options_offsets {
         static constexpr size_t kNoBranchIslands        = 0x497;  // u16
     };
 
-    // 1167.5 -- Optimizations at +0x4D0.
+    // ld-1167.5: Optimizations at +0x4D0.
     struct Prime_1167 {
         static constexpr size_t kOptimizationsBase      = 0x4D0;
         static constexpr size_t kDeadStrip              = 0x4D0 + Optimizations::kDeadStrip;              // 0x4E8

@@ -19,7 +19,7 @@ static_assert(sizeof(LinkerOption) == 16, "");
 using LargeAddend = int64_t;
 static_assert(sizeof(LargeAddend) == 8, "");
 
-// Linker optimization hint -- 8-byte packed record.
+// Linker optimization hint: 8-byte packed record.
 namespace LOH {
 
     enum Kind : uint8_t {
@@ -42,13 +42,14 @@ namespace LOH {
 }
 
 // Dependency info entry. Values match the dep_info file format.
+// kInputLTO is absent on ld-1266+ (LTO dep tracking folded into kInput).
 namespace DependencyEntry {
 
     enum Kind : uint8_t {
         kVersion       = 0x00,
         kInput         = 0x10,
         kInputNotFound = 0x11,
-        kInputLTO      = 0x12,
+        kInputLTO      = 0x12,  // pre-1266 only
         kOutput        = 0x40,
     };
 

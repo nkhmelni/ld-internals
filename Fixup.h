@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Nikita Hmelnitkii. MIT License - see LICENSE.
 //
-// Fixup.h - relocation record layouts.
+// Fixup.h - cross-atom relocation records. Prime and classic variants
+// are both 16 bytes.
 
 #ifndef LD_FIXUP_H
 #define LD_FIXUP_H
@@ -10,7 +11,7 @@
 
 namespace ld {
 
-// Prime fixup record.
+// ld-prime fixup. 10-bit kind selects an instruction-class dispatch range.
 struct Fixup {
 
     uint32_t offsetInAtom;  // +0x00
@@ -25,59 +26,105 @@ struct Fixup {
     void setKind(uint16_t k) { kindAddend = (kindAddend & ~kKindMask) | (k & kKindMask); }
 
     static constexpr uint16_t kKindMax_1115 = 0x149;
+    static constexpr uint16_t kKindMax_1266 = 0x18C;
 
     // Kind dispatch ranges (bits [9:7]):
-    //   0x000 generic, 0x080 arm64, 0x100 x86_64, 0x180 arm64e v2
+    //   0x000 generic, 0x080 arm64, 0x0C0 arm64 was_, 0x100 x86_64,
+    //   0x140 x86_64 was_, 0x180 arm32/thumb
     enum Kind : uint16_t {
-        // --- generic kinds (0x000..0x041) ---
-        kindNone             = 0x000,  // applyFixup errors on this in output
+        // Generic kinds (0x000..0x041).
+        kindNone             = 0x000,
         kindKeepAlive        = 0x001,  // no-op, skipped by buildChainedFixups
-        kindPtr64            = 0x002,  // 64-bit absolute pointer
-        kindPtr32            = 0x003,  // 32-bit absolute pointer
-        kindDiff32           = 0x004,  // 32-bit signed difference
-        kindDiff64           = 0x005,  // 64-bit signed difference
-        kindImageOffset32    = 0x006,  // 32-bit offset from image base
-        kindPcrel32ToGot     = 0x007,  // pcrel32 to GOT slot
-        kindPcrelDelta32     = 0x008,  // 32-bit pcrel delta
-        kindSwiftRel32ToGot  = 0x009,  // Swift pcrel32 to GOT
-        kindDylibExportClient= 0x00A,  // dylib export client reference
-        kindAlias            = 0x00B,  // alias fixup
-        kindTlvOffset        = 0x00C,  // TLV slot offset
-        kindPtr32ToGot       = 0x00D,  // 32-bit ptr to GOT entry
-        kindPtr64ToGot       = 0x00E,  // 64-bit ptr to GOT entry
-        kindDylibIndex       = 0x041,  // dylib index
+        kindPtr64            = 0x002,
+        kindPtr32            = 0x003,
+        kindDiff32           = 0x004,
+        kindDiff64           = 0x005,
+        kindImageOffset32    = 0x006,
+        kindPcrel32ToGot     = 0x007,
+        kindPcrelDelta32     = 0x008,
+        kindSwiftRel32ToGot  = 0x009,
+        kindDylibExportClient= 0x00A,
+        kindAlias            = 0x00B,
+        kindTlvOffset        = 0x00C,
+        kindPtr32ToGot       = 0x00D,
+        kindPtr64ToGot       = 0x00E,
+        kindDylibIndex       = 0x041,
 
-        // --- arm64 kinds (0x080..0x0D1) ---
-        kindArm64Branch26    = 0x080,  // B/BL instruction
-        kindArm64Branch26Add = 0x081,  // B/BL with explicit addend
-        kindArm64Adrp        = 0x082,  // ADRP instruction
-        kindArm64AdrpAdd     = 0x083,  // ADRP with explicit addend
-        kindArm64Lo12        = 0x084,  // LDR/STR/ADD lo12 offset
-        kindArm64Lo12Add     = 0x085,  // lo12 with addend
-        kindArm64AdrpGot     = 0x086,  // ADRP to GOT page
-        kindArm64Lo12Got     = 0x087,  // LDR from GOT slot offset
-        kindArm64AdrpLdr     = 0x088,  // combined ADRP+lo12 pair
-        kindArm64AdrpLdrAuth = 0x089,  // arm64e auth ADRP/lo12 pair
-        kindArm64AdrpLdrGot  = 0x08A,  // combined GOT ADRP+LDR pair
-        kindArm64AdrpTlv     = 0x08B,  // ADRP to TLV page
-        kindArm64Lo12Tlv     = 0x08C,  // LDR from TLV slot
-        kindArm64AuthPtr     = 0x08D,  // arm64e authenticated pointer
-        kindArm64AdrpAddPair = 0x08E,  // ADRP/ADD pair (non-GOT/TLV)
-        // 0x0C0..0x0D1: optimizer-transformed arm64 GOT/TLV kinds
+        // arm64 active (0x080..0x08F).
+        kindArm64Branch26         = 0x080,
+        kindArm64Branch26Add      = 0x081,
+        kindArm64Adrp             = 0x082,
+        kindArm64AdrpAdd          = 0x083,
+        kindArm64Lo12             = 0x084,
+        kindArm64Lo12Add          = 0x085,
+        kindArm64AdrpGot          = 0x086,
+        kindArm64Lo12Got          = 0x087,
+        kindArm64AdrpLdr          = 0x088,
+        kindArm64AdrpLdrAdd       = 0x089,
+        kindArm64AdrpLdrGot       = 0x08A,
+        kindArm64AdrpTlv          = 0x08B,
+        kindArm64Lo12Tlv          = 0x08C,
+        kindArm64AuthPtr          = 0x08D,
+        kindArm64AddGot           = 0x08E,
+        kindArm64AdrpAddGot       = 0x08F,
 
-        // --- x86_64 kinds (0x100..0x149) ---
-        kindX86Call          = 0x101,  // CALL instruction (BRANCH32)
-        kindX86RipRel        = 0x102,  // RIP-relative MOV/LEA (SIGNED)
-        kindX86GotUse        = 0x103,  // LEA from GOT
-        kindX86RipRel1       = 0x104,  // RIP-rel with -1 displacement
-        kindX86RipRel2       = 0x105,  // RIP-rel with -2 displacement
-        kindX86RipRel4       = 0x106,  // RIP-rel with -4 displacement
-        kindX86GotLoad       = 0x107,  // movq from GOT
-        kindX86TlvLoad       = 0x108,  // thread-local load
-        kindX86Branch8       = 0x109,  // short 8-bit branch
+        // arm64 optimizer-transformed "was_" (0x0C0..0x0D1).
+        kindArm64WasAdrpLdrGotLoadGot = 0x0C0,
+        kindArm64WasAdrpLdrGotLeaGot  = 0x0C1,
+        kindArm64WasAdrpLdrGotElideGot= 0x0C2,
+        kindArm64WasAdrpLdrGotBlHelper= 0x0C3,
+        kindArm64WasAdrpGotUseGot     = 0x0C4,
+        kindArm64WasAdrpGotElideGot   = 0x0C5,
+        kindArm64WasAdrpGotBlHelper   = 0x0C6,
+        kindArm64WasLo12GotLoadGot    = 0x0C7,
+        kindArm64WasLo12GotLeaGot     = 0x0C8,
+        kindArm64WasLo12GotElideGot   = 0x0C9,
+        kindArm64WasB26DtraceProbe    = 0x0CA,
+        kindArm64WasB26DtraceEnable   = 0x0CB,
+        kindArm64WasAdrpTlvLoadGot    = 0x0CC,
+        kindArm64WasAdrpTlvElideGot   = 0x0CD,
+        kindArm64WasLo12TlvLoadGot    = 0x0CE,
+        kindArm64WasLo12TlvElideGot   = 0x0CF,
+        kindArm64WasAdrpAddGotLeaGot  = 0x0D0,
+        kindArm64WasAdrpAddGotBlHelper= 0x0D1,
 
-        // dispatch range 0x180 (1230+)
-        kindArm64eAuth2      = 0x182,  // arm64e auth v2
+        // x86_64 active (0x100..0x109).
+        kindX86Call          = 0x100,  // CALL (BRANCH32)
+        kindX86RipRel        = 0x101,
+        kindX86RipGot        = 0x102,
+        kindX86RipRel1       = 0x103,
+        kindX86RipRel2       = 0x104,
+        kindX86RipRel4       = 0x105,
+        kindX86RipGotLoad    = 0x106,
+        kindX86RipTlvLoad    = 0x107,
+        kindX86Branch8       = 0x108,
+        kindX86RipRel1Got    = 0x109,
+
+        // x86_64 optimizer-transformed "was_" (0x140..0x149; 0x141 reserved).
+        kindX86WasRipGotLoadLoadGot   = 0x140,
+        kindX86WasRipGotLoadElideGot  = 0x142,
+        kindX86WasRipGotLoadCallHelper= 0x143,
+        kindX86WasRipGotLeaCallHelper = 0x144,
+        kindX86WasRipGotCmpCallHelper = 0x145,
+        kindX86WasCallDtraceProbe     = 0x146,
+        kindX86WasCallDtraceEnable    = 0x147,
+        kindX86WasRipTlvLoadGot       = 0x148,
+        kindX86WasRipTlvElideGot      = 0x149,
+
+        // ARM32 / Thumb (0x180..0x18C).
+        kindArm32Branch24  = 0x180,
+        kindThumbBranch22  = 0x181,
+        kindArm32Ptr       = 0x182,
+        kindArm32PtrDiff   = 0x183,
+        kindArm32Pcrel     = 0x184,
+        kindArm32Hi16Pc    = 0x185,
+        kindArm32Lo16Pc    = 0x186,
+        kindThumbHi16Pc    = 0x187,
+        kindThumbLo16Pc    = 0x188,
+        kindArm32Hi16      = 0x189,
+        kindArm32Lo16      = 0x18A,
+        kindThumbHi16      = 0x18B,
+        kindThumbLo16      = 0x18C,
     };
 
     // 2-bit binding: 0 = direct (targetIndex), !=0 = pass-generated.
@@ -110,27 +157,35 @@ struct Fixup {
     uint8_t authKey() const { return static_cast<uint8_t>(authInfoByte() & kAuthKeyMask); }
     bool authHasAddrDiversity() const { return (authInfoByte() & kAuthAddrDiv) != 0; }
 
-    // Union of absolute-pointer and got-relative kinds - "occupies a
-    // pointer slot in the final image".
+    // Absolute pointers plus their GOT-indirect variants.
     bool occupiesPointerSlot() const {
         uint16_t k = kind();
         if (kindIsAbsolutePointer(k)) return true;
         return k == kindPtr32ToGot || k == kindPtr64ToGot;
     }
 
-    // Coarse pointer-kind filter. Range [2, 0x0E] includes some
-    // non-pointer kinds that callers may need to filter further.
+    // Coarse range filter; refine with kindIsAbsolutePointer/kindIsGot.
     bool isPointerKind() const {
         uint16_t k = kind();
         if (k >= kindPtr64 && k <= 0x0E) return true;
-        return k == kindArm64AuthPtr || k == kindArm64eAuth2;
+        return k == kindArm64AuthPtr;
     }
 
-    // Dispatch-range classifiers (kindAddend & 0x380).
-    static constexpr bool kindIsGeneric(uint16_t k)  { return (k & 0x380) == 0x000; }
-    static constexpr bool kindIsArm64(uint16_t k)    { return (k & 0x380) == 0x080; }
-    static constexpr bool kindIsX86_64(uint16_t k)   { return (k & 0x380) == 0x100; }
-    static constexpr bool kindIsArm64e_v2(uint16_t k){ return (k & 0x380) == 0x180; }
+    // Dispatch range selected by bits [9:7] of the kind.
+    static constexpr bool kindIsGeneric(uint16_t k)   { return (k & 0x380) == 0x000; }
+    static constexpr bool kindIsArm64(uint16_t k)     { return (k & 0x380) == 0x080; }
+    static constexpr bool kindIsX86_64(uint16_t k)    { return (k & 0x380) == 0x100; }
+    static constexpr bool kindIsArm32(uint16_t k)     { return (k & 0x380) == 0x180; }
+
+    // "was_" kinds: optimizer-transformed GOT/TLV/dtrace relaxations.
+    static constexpr bool kindIsArm64Was(uint16_t k)  { return k >= 0x0C0 && k <= 0x0D1; }
+    static constexpr bool kindIsX86Was(uint16_t k)    { return k >= 0x140 && k <= 0x149 && k != 0x141; }
+    static constexpr bool kindIsOptimizerWas(uint16_t k) { return kindIsArm64Was(k) || kindIsX86Was(k); }
+
+    static constexpr bool kindIsThumb(uint16_t k) {
+        return k == kindThumbBranch22 || k == kindThumbHi16Pc || k == kindThumbLo16Pc
+            || k == kindThumbHi16 || k == kindThumbLo16;
+    }
 
     static constexpr bool kindIsArm64Branch(uint16_t k) {
         return k == kindArm64Branch26 || k == kindArm64Branch26Add;
@@ -138,34 +193,41 @@ struct Fixup {
     static constexpr bool kindIsArm64AdrpAny(uint16_t k) {
         return k == kindArm64Adrp || k == kindArm64AdrpAdd
             || k == kindArm64AdrpGot || k == kindArm64AdrpTlv
-            || k == kindArm64AdrpAddPair;
+            || k == kindArm64AdrpLdr || k == kindArm64AdrpLdrAdd
+            || k == kindArm64AdrpLdrGot || k == kindArm64AdrpAddGot;
     }
     static constexpr bool kindIsArm64Lo12Any(uint16_t k) {
         return k == kindArm64Lo12 || k == kindArm64Lo12Add
             || k == kindArm64Lo12Got || k == kindArm64Lo12Tlv;
     }
     static constexpr bool kindIsAuth(uint16_t k) {
-        return k == kindArm64AdrpLdrAuth || k == kindArm64AuthPtr
-            || k == kindArm64eAuth2;
+        return k == kindArm64AuthPtr;
     }
     static constexpr bool kindIsGot(uint16_t k) {
         return k == kindPtr32ToGot || k == kindPtr64ToGot
             || k == kindPcrel32ToGot || k == kindSwiftRel32ToGot
             || k == kindArm64AdrpGot || k == kindArm64Lo12Got
-            || k == kindArm64AdrpLdrGot;
+            || k == kindArm64AdrpLdrGot || k == kindArm64AddGot
+            || k == kindArm64AdrpAddGot
+            || k == kindX86RipGot || k == kindX86RipGotLoad
+            || k == kindX86RipRel1Got;
     }
     static constexpr bool kindIsTlv(uint16_t k) {
         return k == kindTlvOffset || k == kindArm64AdrpTlv
-            || k == kindArm64Lo12Tlv || k == kindX86TlvLoad;
+            || k == kindArm64Lo12Tlv || k == kindX86RipTlvLoad;
+    }
+    static constexpr bool kindIsDtrace(uint16_t k) {
+        return k == kindArm64WasB26DtraceProbe || k == kindArm64WasB26DtraceEnable
+            || k == kindX86WasCallDtraceProbe  || k == kindX86WasCallDtraceEnable;
     }
 
     static constexpr bool kindIsBranchAny(uint16_t k) {
-        return kindIsArm64Branch(k) || k == kindX86Call || k == kindX86Branch8;
+        return kindIsArm64Branch(k) || k == kindX86Call || k == kindX86Branch8
+            || k == kindArm32Branch24 || k == kindThumbBranch22;
     }
     // True iff the fixup writes a pointer-sized absolute value.
     static constexpr bool kindIsAbsolutePointer(uint16_t k) {
-        return k == kindPtr64 || k == kindPtr32
-            || k == kindArm64AuthPtr || k == kindArm64eAuth2;
+        return k == kindPtr64 || k == kindPtr32 || k == kindArm64AuthPtr;
     }
     static constexpr bool kindIsDelta(uint16_t k) {
         return k == kindDiff32 || k == kindDiff64;
@@ -173,51 +235,98 @@ struct Fixup {
     static constexpr bool kindIsImageOffset(uint16_t k) {
         return k == kindImageOffset32;
     }
+    // Internal metadata kinds, never reach applyFixup.
+    static constexpr bool kindIsInternalOnly(uint16_t k) {
+        return k == kindNone || k == kindKeepAlive
+            || k == kindDylibExportClient || k == kindAlias
+            || k == kindDylibIndex;
+    }
 };
 
 inline const char *primeFixupKindName(uint16_t k) {
     switch (k) {
     case Fixup::kindNone:             return "none";
-    case Fixup::kindKeepAlive:        return "keep_alive";
+    case Fixup::kindKeepAlive:        return "keepAlive";
     case Fixup::kindPtr64:            return "ptr64";
     case Fixup::kindPtr32:            return "ptr32";
     case Fixup::kindDiff32:           return "diff32";
     case Fixup::kindDiff64:           return "diff64";
-    case Fixup::kindImageOffset32:    return "image_off32";
-    case Fixup::kindPcrel32ToGot:     return "pcrel32_got";
+    case Fixup::kindImageOffset32:    return "imageOffset32";
+    case Fixup::kindPcrel32ToGot:     return "pcrel32_to_got";
     case Fixup::kindPcrelDelta32:     return "pcrel_delta32";
-    case Fixup::kindSwiftRel32ToGot:  return "swift_rel32_got";
-    case Fixup::kindDylibExportClient:return "dylib_export_client";
-    case Fixup::kindAlias:            return "alias";
-    case Fixup::kindTlvOffset:        return "tlv_off";
-    case Fixup::kindPtr32ToGot:       return "ptr32_got";
-    case Fixup::kindPtr64ToGot:       return "ptr64_got";
-    case Fixup::kindDylibIndex:       return "dylib_index";
+    case Fixup::kindSwiftRel32ToGot:  return "swift_rel32_to_got";
+    case Fixup::kindDylibExportClient:return "dylibExportClient";
+    case Fixup::kindAlias:            return "alias of";
+    case Fixup::kindTlvOffset:        return "tlvOffset";
+    case Fixup::kindPtr32ToGot:       return "ptr32_to_got";
+    case Fixup::kindPtr64ToGot:       return "ptr64_to_got";
+    case Fixup::kindDylibIndex:       return "dylibIndex";
     case Fixup::kindArm64Branch26:    return "arm64_b26";
-    case Fixup::kindArm64Branch26Add: return "arm64_b26_add";
+    case Fixup::kindArm64Branch26Add: return "arm64_b26_addend";
     case Fixup::kindArm64Adrp:        return "arm64_adrp";
-    case Fixup::kindArm64AdrpAdd:     return "arm64_adrp_add";
+    case Fixup::kindArm64AdrpAdd:     return "arm64_adrp_addend";
     case Fixup::kindArm64Lo12:        return "arm64_lo12";
-    case Fixup::kindArm64Lo12Add:     return "arm64_lo12_add";
+    case Fixup::kindArm64Lo12Add:     return "arm64_lo12_addend";
     case Fixup::kindArm64AdrpGot:     return "arm64_adrp_got";
-    case Fixup::kindArm64Lo12Got:     return "arm64_lo12_got";
-    case Fixup::kindArm64AdrpLdr:     return "arm64_adrp_ldr";
-    case Fixup::kindArm64AdrpLdrAuth: return "arm64_adrp_ldr_auth";
+    case Fixup::kindArm64Lo12Got:     return "arm64_ld12_got";
+    case Fixup::kindArm64AdrpLdr:     return "arm64_adrp_lo12";
+    case Fixup::kindArm64AdrpLdrAdd:  return "arm64_adrp_lo12_addend";
     case Fixup::kindArm64AdrpLdrGot:  return "arm64_adrp_ldr_got";
     case Fixup::kindArm64AdrpTlv:     return "arm64_adrp_tlv";
-    case Fixup::kindArm64Lo12Tlv:     return "arm64_lo12_tlv";
+    case Fixup::kindArm64Lo12Tlv:     return "arm64_ld12_tlv";
     case Fixup::kindArm64AuthPtr:     return "arm64_auth_ptr";
-    case Fixup::kindArm64AdrpAddPair: return "arm64_adrp_add_pair";
-    case Fixup::kindX86Call:          return "x86_call";
-    case Fixup::kindX86RipRel:        return "x86_rip";
-    case Fixup::kindX86GotUse:        return "x86_got_use";
-    case Fixup::kindX86RipRel1:       return "x86_rip1";
-    case Fixup::kindX86RipRel2:       return "x86_rip2";
-    case Fixup::kindX86RipRel4:       return "x86_rip4";
-    case Fixup::kindX86GotLoad:       return "x86_got_load";
-    case Fixup::kindX86TlvLoad:       return "x86_tlv_load";
-    case Fixup::kindX86Branch8:       return "x86_b8";
-    case Fixup::kindArm64eAuth2:      return "arm64e_auth2";
+    case Fixup::kindArm64AddGot:      return "arm64_add_got";
+    case Fixup::kindArm64AdrpAddGot:  return "arm64_adrp_add_got";
+    case Fixup::kindArm64WasAdrpLdrGotLoadGot:  return "arm64_was_adrp_ldr_got_load_got";
+    case Fixup::kindArm64WasAdrpLdrGotLeaGot:   return "arm64_was_adrp_ldr_got_lea_got";
+    case Fixup::kindArm64WasAdrpLdrGotElideGot: return "arm64_was_adrp_ldr_got_elide_got";
+    case Fixup::kindArm64WasAdrpLdrGotBlHelper: return "arm64_was_adrp_ldr_got_bl_helper";
+    case Fixup::kindArm64WasAdrpGotUseGot:      return "arm64_was_adrp_got_use_got";
+    case Fixup::kindArm64WasAdrpGotElideGot:    return "arm64_was_adrp_got_elide_got";
+    case Fixup::kindArm64WasAdrpGotBlHelper:    return "arm64_was_adrp_got_bl_helper";
+    case Fixup::kindArm64WasLo12GotLoadGot:     return "arm64_was_ld12_got_load_got";
+    case Fixup::kindArm64WasLo12GotLeaGot:      return "arm64_was_ld12_got_lea_got";
+    case Fixup::kindArm64WasLo12GotElideGot:    return "arm64_was_ld12_got_elide_got";
+    case Fixup::kindArm64WasB26DtraceProbe:     return "arm64_was_b26_dtrace_probe";
+    case Fixup::kindArm64WasB26DtraceEnable:    return "arm64_was_b26_dtrace_enable";
+    case Fixup::kindArm64WasAdrpTlvLoadGot:     return "arm64_was_adrp_tlv_load_got";
+    case Fixup::kindArm64WasAdrpTlvElideGot:    return "arm64_was_adrp_tlv_elide_got";
+    case Fixup::kindArm64WasLo12TlvLoadGot:     return "arm64_was_ld12_tlv_load_got";
+    case Fixup::kindArm64WasLo12TlvElideGot:    return "arm64_was_ld12_tlv_elide_got";
+    case Fixup::kindArm64WasAdrpAddGotLeaGot:   return "arm64_was_adrp_add_got_lea_got";
+    case Fixup::kindArm64WasAdrpAddGotBlHelper: return "arm64_was_adrp_add_got_bl_helper";
+    case Fixup::kindX86Call:          return "x86_64_call";
+    case Fixup::kindX86RipRel:        return "x86_64_rip";
+    case Fixup::kindX86RipGot:        return "x86_64_rip_got";
+    case Fixup::kindX86RipRel1:       return "x86_64_rip1";
+    case Fixup::kindX86RipRel2:       return "x86_64_rip2";
+    case Fixup::kindX86RipRel4:       return "x86_64_rip4";
+    case Fixup::kindX86RipGotLoad:    return "x86_64_rip_got_load";
+    case Fixup::kindX86RipTlvLoad:    return "x86_64_rip_tlv_load";
+    case Fixup::kindX86Branch8:       return "x86_64_branch8";
+    case Fixup::kindX86RipRel1Got:    return "x86_64_rip1_got";
+    case Fixup::kindX86WasRipGotLoadLoadGot:    return "x86_64_was_rip_got_load_load_got";
+    case Fixup::kindX86WasRipGotLoadElideGot:   return "x86_64_was_rip_got_load_elide_got";
+    case Fixup::kindX86WasRipGotLoadCallHelper: return "x86_64_was_rip_got_load_call_helper";
+    case Fixup::kindX86WasRipGotLeaCallHelper:  return "x86_64_was_rip_got_lea_call_helper";
+    case Fixup::kindX86WasRipGotCmpCallHelper:  return "x86_64_was_rip_got_cmp_call_helper";
+    case Fixup::kindX86WasCallDtraceProbe:      return "x86_64_was_call_dtrace_probe";
+    case Fixup::kindX86WasCallDtraceEnable:     return "x86_64_was_call_dtrace_enable";
+    case Fixup::kindX86WasRipTlvLoadGot:        return "x86_64_was_rip_tlv_load_got";
+    case Fixup::kindX86WasRipTlvElideGot:       return "x86_64_was_rip_tlv_elide_got";
+    case Fixup::kindArm32Branch24:    return "arm32_b24";
+    case Fixup::kindThumbBranch22:    return "thumb_b22";
+    case Fixup::kindArm32Ptr:         return "arm32_ptr";
+    case Fixup::kindArm32PtrDiff:     return "arm32_ptrdiff";
+    case Fixup::kindArm32Pcrel:       return "arm32_pcrel";
+    case Fixup::kindArm32Hi16Pc:      return "arm32_hi16_pc";
+    case Fixup::kindArm32Lo16Pc:      return "arm32_lo16_pc";
+    case Fixup::kindThumbHi16Pc:      return "thumb_hi16_pc";
+    case Fixup::kindThumbLo16Pc:      return "thumb_lo16_pc";
+    case Fixup::kindArm32Hi16:        return "arm32_hi16";
+    case Fixup::kindArm32Lo16:        return "arm32_lo16";
+    case Fixup::kindThumbHi16:        return "thumb_hi16";
+    case Fixup::kindThumbLo16:        return "thumb_lo16";
     default: return "?";
     }
 }
@@ -248,7 +357,7 @@ static_assert(offsetof(Fixup, targetRef)    == 0x04, "");
 static_assert(offsetof(Fixup, kindAddend)   == 0x08, "");
 static_assert(offsetof(Fixup, extras)       == 0x0C, "");
 
-// Classic fixup record.
+// ld64 classic fixup. `binding` in flags selects the union interpretation.
 namespace classic {
 
 struct Fixup {
@@ -368,6 +477,69 @@ static_assert(sizeof(Fixup) == 16, "");
 static_assert(offsetof(Fixup, u)             == 0x00, "");
 static_assert(offsetof(Fixup, offsetInAtom)  == 0x08, "");
 static_assert(offsetof(Fixup, flags)         == 0x0C, "");
+
+inline const char *classicFixupKindName(uint8_t k) {
+    switch (k) {
+    case Fixup::kindNone:                              return "none";
+    case Fixup::kindNoneFollowOn:                      return "none_follow_on";
+    case Fixup::kindNoneGroupSubordinate:              return "none_group_sub";
+    case Fixup::kindNoneGroupSubordinateFDE:           return "none_group_sub_fde";
+    case Fixup::kindNoneGroupSubordinateLSDA:          return "none_group_sub_lsda";
+    case Fixup::kindNoneGroupSubordinatePersonality:   return "none_group_sub_pers";
+    case Fixup::kindSetTargetAddress:                  return "set_target_addr";
+    case Fixup::kindSubtractTargetAddress:             return "sub_target_addr";
+    case Fixup::kindAddAddend:                         return "add_addend";
+    case Fixup::kindSubtractAddend:                    return "sub_addend";
+    case Fixup::kindSetTargetImageOffset:              return "set_image_off";
+    case Fixup::kindSetTargetSectionOffset:            return "set_sect_off";
+    case Fixup::kindSetTargetTLVTemplateOffset:        return "set_tlv_tmpl_off";
+    case Fixup::kindStore8:                            return "store8";
+    case Fixup::kindStoreLittleEndian16:               return "store_le16";
+    case Fixup::kindStoreLittleEndianLow24of32:        return "store_le_low24";
+    case Fixup::kindStoreLittleEndian32:               return "store_le32";
+    case Fixup::kindStoreLittleEndian64:               return "store_le64";
+    case Fixup::kindStoreBigEndian16:                  return "store_be16";
+    case Fixup::kindStoreBigEndianLow24of32:           return "store_be_low24";
+    case Fixup::kindStoreBigEndian32:                  return "store_be32";
+    case Fixup::kindStoreBigEndian64:                  return "store_be64";
+    case Fixup::kindStoreX86BranchPCRel8:              return "x86_bpc8";
+    case Fixup::kindStoreX86BranchPCRel32:             return "x86_bpc32";
+    case Fixup::kindStoreX86PCRel8:                    return "x86_pc8";
+    case Fixup::kindStoreX86PCRel16:                   return "x86_pc16";
+    case Fixup::kindStoreX86PCRel32:                   return "x86_pc32";
+    case Fixup::kindStoreX86PCRel32_1:                 return "x86_pc32_1";
+    case Fixup::kindStoreX86PCRel32_2:                 return "x86_pc32_2";
+    case Fixup::kindStoreX86PCRel32_4:                 return "x86_pc32_4";
+    case Fixup::kindStoreX86PCRel32GOTLoad:            return "x86_pc32_got_ld";
+    case Fixup::kindStoreX86PCRel32GOTLoadNowLEA:      return "x86_pc32_got_ld_lea";
+    case Fixup::kindStoreX86PCRel32GOT:                return "x86_pc32_got";
+    case Fixup::kindStoreX86PCRel32TLVLoad:            return "x86_pc32_tlv_ld";
+    case Fixup::kindStoreX86PCRel32TLVLoadNowLEA:      return "x86_pc32_tlv_ld_lea";
+    case Fixup::kindStoreX86Abs32TLVLoad:              return "x86_abs32_tlv_ld";
+    case Fixup::kindStoreX86Abs32TLVLoadNowLEA:        return "x86_abs32_tlv_ld_lea";
+    case Fixup::kindStoreARMBranch24:                  return "arm_b24";
+    case Fixup::kindStoreThumbBranch22:                return "thumb_b22";
+    case Fixup::kindStoreARMLoad12:                    return "arm_ld12";
+    case Fixup::kindStoreARMLow16:                     return "arm_lo16";
+    case Fixup::kindStoreARMHigh16:                    return "arm_hi16";
+    case Fixup::kindStoreThumbLow16:                   return "thumb_lo16";
+    case Fixup::kindStoreThumbHigh16:                  return "thumb_hi16";
+    case Fixup::kindStoreARM64Branch26:                return "arm64_b26";
+    case Fixup::kindStoreARM64Page21:                  return "arm64_page21";
+    case Fixup::kindStoreARM64PageOff12:               return "arm64_pageoff12";
+    case Fixup::kindStoreARM64GOTLoadPage21:           return "arm64_got_page21";
+    case Fixup::kindStoreARM64GOTLoadPageOff12:        return "arm64_got_pageoff12";
+    case Fixup::kindStoreARM64GOTLeaPage21:            return "arm64_got_lea_page21";
+    case Fixup::kindStoreARM64GOTLeaPageOff12:         return "arm64_got_lea_pageoff12";
+    case Fixup::kindStoreARM64TLVPLoadPage21:          return "arm64_tlv_page21";
+    case Fixup::kindStoreARM64TLVPLoadPageOff12:       return "arm64_tlv_pageoff12";
+    case Fixup::kindStoreARM64TLVPLoadNowLeaPage21:    return "arm64_tlv_lea_page21";
+    case Fixup::kindStoreARM64TLVPLoadNowLeaPageOff12: return "arm64_tlv_lea_pageoff12";
+    case Fixup::kindStoreARM64PointerToGOT:            return "arm64_ptr_to_got";
+    case Fixup::kindStoreARM64PCRelToGOT:              return "arm64_pcrel_to_got";
+    default: return "?";
+    }
+}
 
 } // namespace classic
 } // namespace ld

@@ -31,6 +31,21 @@ struct LayoutConstants {
 
     // Segment layout. Prot/order offsets differ: 1115 vs 1221+.
     size_t segmentStride;
+    size_t sectionStride;       // 0x88 (1115+) / 0x80 (1053)
+    size_t sectionNamePtr;      // 0x00 (1115+) / 0x10 (1053; seg/sect order flipped)
+    size_t sectionNameLen;      // 0x08 (1115+) / 0x18 (1053)
+    size_t sectionSegNamePtr;   // 0x10 (1115+) / 0x00 (1053)
+    size_t sectionContentType;  // 0x2C (1115+) / 0x24 (1053)
+    size_t sectionAlignment;    // 0x30 (1115+) / 0x28 (1053)
+    size_t sectionAddress;      // 0x38 (1115+) / 0x30 (1053)
+    size_t sectionSize;         // 0x40 (1115+) / 0x38 (1053)
+    size_t sectionFileOffset;   // 0x48 u64 (1115+) / 0x40 u32 (1053)
+    bool   sectionFileOffsetIs32; // true on 1053, false on 1115+
+    size_t sectionAtomsBegin;   // 0x60 (1115+) / 0x58 (1053)
+    size_t sectionAtomsEnd;     // 0x68 (1115+) / 0x60 (1053)
+    size_t sectionAtomsCap;     // 0x70 (1115+) / 0x68 (1053)
+    size_t sectionRO;           // 0x78 (1115+) / 0x70 (1053)
+    size_t sectionIdx;          // 0x80 (1115+) / 0x48 u32 (1053, MED)
     size_t segSectionsBegin;
     size_t segSectionsEnd;
     size_t segMaxProt;          // 0x2C (1115) / 0x2E (1221+)
@@ -46,7 +61,8 @@ struct LayoutConstants {
     size_t dynamicFileLinkerOptions;
     size_t dynamicFileAltFileInfos;
     size_t dynamicFileLargeAddends;
-    size_t dynamicFileFileLOHs;        // u64 packed records, 8B stride
+    size_t dynamicFileFileLOHs;           // u64 packed records, 8B stride
+    size_t dynamicFileAtomAndDataInCode;  // 1266+ only; 24B element stride
 
     // LayoutExecutable indirects vector.
     size_t layoutIndirectBegin;
@@ -102,10 +118,13 @@ struct LayoutConstants {
     size_t layoutSegmentsBegin;      // 0x120 / 0x3190 (1221/30) / 0x31A0 (1266)
     size_t layoutSegmentsEnd;
     size_t layoutSegmentsCap;
-    size_t layoutLoadCmdsBase;       // 0 (1115) / 0x3108
-    size_t layoutLoadCmdsCount;      // 0 / 0x3110
     size_t layoutDylibMapping;       // 0 / 0x0D8
     size_t layoutEntryAtom;          // 0 / 0x0D0
+
+    size_t atomFilePath;             // 0x70 (1053) / 0x78 (1115+)
+    size_t atomFilePathLen;          // 0x78 (1053) / 0x80 (1115+)
+
+    size_t dylibFileInfoSize;        // 0x88 (1053, no trailing flags) / 0x90 (1115+)
 };
 
 // Returns {valid=false} for unrecognised versions.
@@ -143,6 +162,24 @@ inline LayoutConstants layoutConstantsFor(const LinkerVersion &v) {
 
     if (v.major >= 1266) {
         lc.segmentStride = 0x58;
+        lc.sectionStride = 0x88;
+        lc.sectionNamePtr     = 0x00;
+        lc.sectionNameLen     = 0x08;
+        lc.sectionSegNamePtr  = 0x10;
+        lc.sectionContentType = 0x2C;
+        lc.sectionAlignment   = 0x30;
+        lc.sectionAddress     = 0x38;
+        lc.sectionSize        = 0x40;
+        lc.sectionFileOffset  = 0x48;
+        lc.sectionFileOffsetIs32 = false;
+        lc.sectionAtomsBegin  = 0x60;
+        lc.sectionAtomsEnd    = 0x68;
+        lc.sectionAtomsCap    = 0x70;
+        lc.sectionRO          = 0x78;
+        lc.sectionIdx         = 0x80;
+        lc.atomFilePath     = 0x78;
+        lc.atomFilePathLen  = 0x80;
+        lc.dylibFileInfoSize = 0x90;
         lc.segSectionsBegin = 0x40; lc.segSectionsEnd = 0x48;
         lc.segMaxProt = 0x2E; lc.segInitProt = 0x2F;
         lc.segSegmentOrder = 0x3C; lc.segFixedAddr = 0x38; lc.segLinkedSeg = 0x30;
@@ -153,6 +190,7 @@ inline LayoutConstants layoutConstantsFor(const LinkerVersion &v) {
         lc.dynamicFileAltFileInfos = 0x180;
         lc.dynamicFileLargeAddends = 0x230;
         lc.dynamicFileFileLOHs = 0x1D0;
+        lc.dynamicFileAtomAndDataInCode = 0x200;
         lc.layoutIndirectBegin = 0x3108;
         lc.layoutIndirectEnd   = 0x3110;
         lc.passFilesBegin = 0x878;
@@ -191,8 +229,6 @@ inline LayoutConstants layoutConstantsFor(const LinkerVersion &v) {
         lc.layoutSegmentsBegin    = 0x31A0;
         lc.layoutSegmentsEnd      = 0x31A8;
         lc.layoutSegmentsCap      = 0x31B0;
-        lc.layoutLoadCmdsBase     = 0x3108;
-        lc.layoutLoadCmdsCount    = 0x3110;
         lc.layoutDylibMapping     = 0x0D8;
         lc.layoutEntryAtom        = 0x0D0;
     } else if (v.major >= 1167) {
@@ -200,6 +236,24 @@ inline LayoutConstants layoutConstantsFor(const LinkerVersion &v) {
         // shared; 1167 overrides the Options/Consolidator/Layout tail at
         // the bottom of this branch.
         lc.segmentStride = 0x58;
+        lc.sectionStride = 0x88;
+        lc.sectionNamePtr     = 0x00;
+        lc.sectionNameLen     = 0x08;
+        lc.sectionSegNamePtr  = 0x10;
+        lc.sectionContentType = 0x2C;
+        lc.sectionAlignment   = 0x30;
+        lc.sectionAddress     = 0x38;
+        lc.sectionSize        = 0x40;
+        lc.sectionFileOffset  = 0x48;
+        lc.sectionFileOffsetIs32 = false;
+        lc.sectionAtomsBegin  = 0x60;
+        lc.sectionAtomsEnd    = 0x68;
+        lc.sectionAtomsCap    = 0x70;
+        lc.sectionRO          = 0x78;
+        lc.sectionIdx         = 0x80;
+        lc.atomFilePath     = 0x78;
+        lc.atomFilePathLen  = 0x80;
+        lc.dylibFileInfoSize = 0x90;
         lc.segSectionsBegin = 0x40; lc.segSectionsEnd = 0x48;
         lc.segMaxProt = 0x2E; lc.segInitProt = 0x2F;
         lc.segSegmentOrder = 0x3C; lc.segFixedAddr = 0x38; lc.segLinkedSeg = 0x30;
@@ -248,8 +302,6 @@ inline LayoutConstants layoutConstantsFor(const LinkerVersion &v) {
         lc.layoutSegmentsBegin    = 0x3190;
         lc.layoutSegmentsEnd      = 0x3198;
         lc.layoutSegmentsCap      = 0x31A0;
-        lc.layoutLoadCmdsBase     = 0x3108;
-        lc.layoutLoadCmdsCount    = 0x3110;
         lc.layoutDylibMapping     = 0x0D8;
         lc.layoutEntryAtom        = 0x0D0;
 
@@ -276,15 +328,116 @@ inline LayoutConstants layoutConstantsFor(const LinkerVersion &v) {
             lc.layoutSegmentsCap     = 0x138;
 
             lc.layoutArch          = 0;
-            lc.layoutLoadCmdsBase  = 0;
-            lc.layoutLoadCmdsCount = 0;
             lc.layoutIndirectBegin = 0;
             lc.layoutIndirectEnd   = 0;
             lc.layoutDylibMapping  = 0;
             lc.layoutEntryAtom     = 0;
         }
+    } else if (v.major < 1100) {
+        // ld-1053.12. Strides 0x48/0x80. LinkeditBuilder is inlined;
+        // LayoutExecutable ctor has no Consolidator parameter.
+        lc.segmentStride    = 0x48;
+        lc.sectionStride    = 0x80;
+        lc.sectionNamePtr     = 0x10;  // seg/sect name order flipped vs 1115+
+        lc.sectionNameLen     = 0x18;
+        lc.sectionSegNamePtr  = 0x00;
+        lc.sectionContentType = 0x24;  // shifted from 0x2C
+        lc.sectionAlignment   = 0x28;
+        lc.sectionAddress     = 0x30;
+        lc.sectionSize        = 0x38;
+        lc.sectionFileOffset  = 0x40;
+        lc.sectionFileOffsetIs32 = true;  // u32 on 1053, u64 on 1115+
+        lc.sectionAtomsBegin  = 0x58;
+        lc.sectionAtomsEnd    = 0x60;
+        lc.sectionAtomsCap    = 0x68;
+        lc.sectionRO          = 0x70;
+        lc.sectionIdx         = 0x48;  // u32, MED confidence
+        lc.atomFilePath     = 0x70;  // shifted by -8 vs 1115+
+        lc.atomFilePathLen  = 0x78;
+        lc.dylibFileInfoSize = 0x88; // no trailing hasWeakDefs/hasTLVars
+        lc.segSectionsBegin = 0x30;
+        lc.segSectionsEnd   = 0x38;
+        lc.segMaxProt       = 0;     // absent; initProt covers both roles
+        lc.segInitProt      = 0x2C;
+        lc.segSegmentOrder  = 0;     // computed via LayoutExecutable::segmentOrder
+        lc.segFixedAddr     = 0;
+        lc.segLinkedSeg     = 0;
+
+        lc.dynamicFixupPool         = 0;       // no explicit field
+        lc.dynamicFileDylibFileInfo = 0x120;
+        lc.dynamicFileIsLTO         = 0x100;
+        lc.dynamicFileLinkerOptions = 0x128;
+        lc.dynamicFileAltFileInfos  = 0x160;
+        lc.dynamicFileLargeAddends  = 0x1C8;
+        lc.dynamicFileFileLOHs      = 0;       // LOHs not emitted by 1053
+
+        lc.layoutIndirectBegin = 0;
+        lc.layoutIndirectEnd   = 0;
+        lc.passFilesBegin      = 0;
+        lc.passFilesEnd        = 0;
+
+        lc.fileVtableSrcPath         = 0;     // no srcPath slot on 1053
+        lc.fileVtableDylibFileInfo   = 0x20;  // runtime vtable index
+        lc.fileVtableDependencyInfos = 0x28;
+        lc.fileVtableLinkerOptions   = 0x30;
+        lc.fileVtableLargeAddends    = 0x38;
+        lc.fileVtableIsLTO           = 0x40;
+        lc.fileVtableIsDynamic       = 0x10;
+        lc.fileVtableAtomLOHs        = 0;
+        lc.fileVtableFileLOHs        = 0;
+
+        lc.atomFile1DylibFileInfo   = 0x80;
+        lc.atomFile1FixupPool       = 0;      // inline FixupRO_1 span, no pool
+        lc.atomFile1LargeAddends    = 0x98;
+        lc.atomFile1LinkerOptions   = 0xC8;
+        lc.atomFile1DependencyInfos = 0xE0;
+
+        lc.optionsOptimizationsBase     = options_offsets::Prime_1053::kOptimizationsBase;
+        lc.optionsDeadStrip             = options_offsets::Prime_1053::kDeadStrip;
+        lc.optionsDeadStripDylibs       = options_offsets::Prime_1053::kDeadStripDylibs;
+        lc.optionsAllowDeadDuplicates   = options_offsets::Prime_1053::kAllowDeadDuplicates;
+        lc.optionsMergeZeroFillSections = options_offsets::Prime_1053::kMergeZeroFillSections;
+
+        lc.consolidatorInputAtomFilesBegin = consolidator_offsets::Prime_1053::kInputAtomFilesBegin;
+        lc.consolidatorInputAtomFilesEnd   = consolidator_offsets::Prime_1053::kInputAtomFilesEnd;
+        lc.consolidatorOutputDylibsBegin   = consolidator_offsets::Prime_1053::kOutputDylibsBegin;
+        lc.consolidatorOutputDylibsEnd     = consolidator_offsets::Prime_1053::kOutputDylibsEnd;
+        lc.consolidatorOutputDylibsCap     = consolidator_offsets::Prime_1053::kOutputDylibsCap;
+
+        lc.builderOptionsOffset   = 0;
+        lc.builderFlagsOffset     = 0;
+        lc.builderLayoutOffset    = 0;
+        lc.builderAtomGroupOffset = 0;
+
+        // 0x0F8 is a -1 sentinel; entryAtom lives at 0x100.
+        lc.layoutOptionsRef       = 0x000;
+        lc.layoutConsolidatorRef  = 0;
+        lc.layoutArch             = 0;
+        lc.layoutSegmentsBegin    = 0x120;
+        lc.layoutSegmentsEnd      = 0x128;
+        lc.layoutSegmentsCap      = 0x130;
+        lc.layoutDylibMapping     = 0x108;
+        lc.layoutEntryAtom        = 0x100;
     } else {
         lc.segmentStride = 0x50;
+        lc.sectionStride = 0x88;
+        lc.sectionNamePtr     = 0x00;
+        lc.sectionNameLen     = 0x08;
+        lc.sectionSegNamePtr  = 0x10;
+        lc.sectionContentType = 0x2C;
+        lc.sectionAlignment   = 0x30;
+        lc.sectionAddress     = 0x38;
+        lc.sectionSize        = 0x40;
+        lc.sectionFileOffset  = 0x48;
+        lc.sectionFileOffsetIs32 = false;
+        lc.sectionAtomsBegin  = 0x60;
+        lc.sectionAtomsEnd    = 0x68;
+        lc.sectionAtomsCap    = 0x70;
+        lc.sectionRO          = 0x78;
+        lc.sectionIdx         = 0x80;
+        lc.atomFilePath     = 0x78;
+        lc.atomFilePathLen  = 0x80;
+        lc.dylibFileInfoSize = 0x90;
         lc.segSectionsBegin = 0x38; lc.segSectionsEnd = 0x40;
         lc.segMaxProt = 0x2C; lc.segInitProt = 0x2D;
         lc.segSegmentOrder = 0x30; lc.segFixedAddr = 0; lc.segLinkedSeg = 0;
@@ -334,31 +487,10 @@ inline LayoutConstants layoutConstantsFor(const LinkerVersion &v) {
         lc.layoutSegmentsBegin    = 0x120;
         lc.layoutSegmentsEnd      = 0x128;
         lc.layoutSegmentsCap      = 0x130;
-        lc.layoutLoadCmdsBase     = 0;
-        lc.layoutLoadCmdsCount    = 0;
         lc.layoutDylibMapping     = 0;
         lc.layoutEntryAtom        = 0;
     }
     return lc;
-}
-
-// Section fields - 0x88 stride, stable across versions. kContentType
-// holds ld::ContentType values (NOT AtomKind).
-namespace section {
-    inline constexpr size_t kStride      = 0x88;
-    inline constexpr size_t kNamePtr     = 0x00;
-    inline constexpr size_t kNameLen     = 0x08;
-    inline constexpr size_t kSegNamePtr  = 0x10;
-    inline constexpr size_t kSegNameLen  = 0x18;
-    inline constexpr size_t kContentType = 0x2C;
-    inline constexpr size_t kAlignment   = 0x30;  // u16 alignment power
-    inline constexpr size_t kAddress     = 0x38;
-    inline constexpr size_t kSize        = 0x40;
-    inline constexpr size_t kFileOffset  = 0x48;
-    inline constexpr size_t kAtomsBegin  = 0x60;
-    inline constexpr size_t kAtomsEnd    = 0x68;
-    inline constexpr size_t kSectionRO   = 0x78;
-    inline constexpr size_t kSectionIdx  = 0x80;
 }
 
 // SectionRO_1 - inline .o-file metadata (0x2C bytes).
@@ -370,29 +502,20 @@ namespace SectionRO {
     inline constexpr size_t kSize        = 0x2C;
 }
 
-// Segment fields. Stable fields use these constants directly; fields
-// that shifted between ld-1115 and ld-1221+ go through LayoutConstants
-// (segMaxProt, segInitProt, segSegmentOrder, segFixedAddr, segLinkedSeg).
+// Segment fields stable across all versions. Version-dependent offsets
+// (maxProt, initProt, segmentOrder, fixedAddr, linkedSeg, section vec)
+// live in LayoutConstants.
 namespace segment {
-    // Stable across all versions.
     inline constexpr size_t kNamePtr      = 0x00;
     inline constexpr size_t kNameLen      = 0x08;
     inline constexpr size_t kVMAddr       = 0x10;
     inline constexpr size_t kVMSize       = 0x18;
     inline constexpr size_t kFileOff      = 0x20;  // u32
     inline constexpr size_t kFileSize     = 0x24;  // u32
-    inline constexpr size_t kSegFlags     = 0x28;  // u32 (SG_READ_ONLY etc)
-    // Version-dependent (use LayoutConstants accessors):
-    //   maxProt:      0x2C (1115) / 0x2E (1221+)
-    //   initProt:     0x2D (1115) / 0x2F (1221+)
-    //   linkedSeg:    absent (1115) / 0x30 (1221+)
-    //   fixedAddr:    absent (1115) / 0x38 (1221+)
-    //   segmentOrder: 0x30 (1115) / 0x3C (1221+)
-    // Sections vector: +0x38/+0x40 (1115) or +0x40/+0x48 (1221+).
+    inline constexpr size_t kSegFlags     = 0x28;  // u32 (SG_* bits)
 }
 
-// AtomPlacement (Atom+0x10). Holds the atom's offset within its final
-// section + a u32 section index into the LinkedImage section table.
+// Atom+0x10. Final section offset + section index.
 namespace placement {
     inline constexpr size_t kOffset       = 0x00;  // u64 offset within section
     inline constexpr size_t kSectionIndex = 0x0C;  // u32 section index
@@ -460,44 +583,76 @@ inline const uint8_t *segSectionsEnd(const void *seg, const LayoutConstants &lc)
     return static_cast<const uint8_t *>(readPtr(seg, lc.segSectionsEnd));
 }
 
-inline const char *sectionName(const void *sec) {
-    return static_cast<const char *>(readPtr(sec, section::kNamePtr));
+// Section accessors require a LayoutConstants because every offset
+// diverges on 1053 (seg/sect name order flipped, atoms vector at +0x58,
+// fileOffset narrowed to u32, etc.).
+
+inline const char *sectionName(const void *sec, const LayoutConstants &lc) {
+    if (!sec || !lc.valid) return nullptr;
+    return static_cast<const char *>(readPtr(sec, lc.sectionNamePtr));
 }
 
-inline size_t sectionNameLen(const void *sec) {
-    return static_cast<size_t>(readU64(sec, section::kNameLen));
+inline size_t sectionNameLen(const void *sec, const LayoutConstants &lc) {
+    if (!sec || !lc.valid) return 0;
+    return static_cast<size_t>(readU64(sec, lc.sectionNameLen));
 }
 
-inline const char *sectionSegName(const void *sec) {
-    return static_cast<const char *>(readPtr(sec, section::kSegNamePtr));
+inline const char *sectionSegName(const void *sec, const LayoutConstants &lc) {
+    if (!sec || !lc.valid) return nullptr;
+    return static_cast<const char *>(readPtr(sec, lc.sectionSegNamePtr));
 }
 
-inline uint8_t sectionContentType(const void *sec) {
-    return readU8(sec, section::kContentType);
+inline uint8_t sectionContentType(const void *sec, const LayoutConstants &lc) {
+    if (!sec || !lc.valid) return 0;
+    return readU8(sec, lc.sectionContentType);
 }
 
-inline uint64_t sectionAddress(const void *sec) {
-    return readU64(sec, section::kAddress);
+inline uint64_t sectionAddress(const void *sec, const LayoutConstants &lc) {
+    if (!sec || !lc.valid) return 0;
+    return readU64(sec, lc.sectionAddress);
 }
 
-inline uint64_t sectionSize(const void *sec) {
-    return readU64(sec, section::kSize);
+inline uint64_t sectionSize(const void *sec, const LayoutConstants &lc) {
+    if (!sec || !lc.valid) return 0;
+    return readU64(sec, lc.sectionSize);
 }
 
-inline uint64_t sectionFileOffset(const void *sec) {
-    return readU64(sec, section::kFileOffset);
+inline uint64_t sectionFileOffset(const void *sec, const LayoutConstants &lc) {
+    if (!sec || !lc.valid) return 0;
+    return lc.sectionFileOffsetIs32
+        ? static_cast<uint64_t>(readU32(sec, lc.sectionFileOffset))
+        : readU64(sec, lc.sectionFileOffset);
 }
 
-inline uint16_t sectionAlignmentPow2(const void *sec) {
-    return readU16(sec, section::kAlignment);
+inline uint16_t sectionAlignmentPow2(const void *sec, const LayoutConstants &lc) {
+    if (!sec || !lc.valid) return 0;
+    return readU16(sec, lc.sectionAlignment);
 }
 
-inline uint32_t sectionIndex(const void *sec) {
-    return readU32(sec, section::kSectionIdx);
+inline uint32_t sectionIndex(const void *sec, const LayoutConstants &lc) {
+    if (!sec || !lc.valid || lc.sectionIdx == 0) return 0;
+    return readU32(sec, lc.sectionIdx);
 }
 
-inline const void *sectionRO(const void *sec) {
-    return readPtr(sec, section::kSectionRO);
+inline const void *sectionRO(const void *sec, const LayoutConstants &lc) {
+    if (!sec || !lc.valid) return nullptr;
+    return readPtr(sec, lc.sectionRO);
+}
+
+inline AtomPtr const *sectionAtomsBegin(const void *sec, const LayoutConstants &lc) {
+    if (!sec || !lc.valid) return nullptr;
+    return static_cast<AtomPtr const *>(readPtr(sec, lc.sectionAtomsBegin));
+}
+
+inline AtomPtr const *sectionAtomsEnd(const void *sec, const LayoutConstants &lc) {
+    if (!sec || !lc.valid) return nullptr;
+    return static_cast<AtomPtr const *>(readPtr(sec, lc.sectionAtomsEnd));
+}
+
+inline bool sectionContainsVM(const void *sec, const LayoutConstants &lc,
+                              uint64_t vmaddr) {
+    const uint64_t base = sectionAddress(sec, lc);
+    return vmaddr >= base && vmaddr < base + sectionSize(sec, lc);
 }
 
 // SectionRO (0x2C bytes inline in .o files). Returns 0 / empty for null.
@@ -505,23 +660,6 @@ inline uint32_t sectionRoAlignment(const void *ro)   { return ro ? readU32(ro, S
 inline uint32_t sectionRoContentType(const void *ro) { return ro ? readU32(ro, SectionRO::kContentType) : 0; }
 inline const char *sectionRoSegName(const void *ro)  { return ro ? static_cast<const char *>(ro) + SectionRO::kSegName  : nullptr; }
 inline const char *sectionRoSectName(const void *ro) { return ro ? static_cast<const char *>(ro) + SectionRO::kSectName : nullptr; }
-
-inline uint64_t sectionVMEnd(const void *sec) {
-    return sectionAddress(sec) + sectionSize(sec);
-}
-
-inline bool sectionContainsVM(const void *sec, uint64_t vmaddr) {
-    const uint64_t base = sectionAddress(sec);
-    return vmaddr >= base && vmaddr < base + sectionSize(sec);
-}
-
-inline AtomPtr const *sectionAtomsBegin(const void *sec) {
-    return static_cast<AtomPtr const *>(readPtr(sec, section::kAtomsBegin));
-}
-
-inline AtomPtr const *sectionAtomsEnd(const void *sec) {
-    return static_cast<AtomPtr const *>(readPtr(sec, section::kAtomsEnd));
-}
 
 // Segment field accessors.
 
@@ -584,9 +722,12 @@ inline bool segmentNameIs(const void *seg, const char (&name)[7]) {
     return w16a == w16b;
 }
 
-inline bool sectionNameIs(const void *sec, const char *name, size_t nameLen) {
-    if (sectionNameLen(sec) != nameLen) return false;
-    return memcmp(sectionName(sec), name, nameLen) == 0;
+// 1053 flips seg/sect name order, so sectionName always needs lc.
+inline bool sectionNameIs(const void *sec, const LayoutConstants &lc,
+                          const char *name, size_t nameLen) {
+    const char *n = sectionName(sec, lc);
+    if (!n) return false;
+    return __builtin_strncmp(n, name, nameLen) == 0 && n[nameLen] == '\0';
 }
 
 // Segment / section traversal helpers.
@@ -618,7 +759,8 @@ inline size_t segmentSectionCount(const void *seg, const LayoutConstants &lc) {
     const uint8_t *b = segSectionsBegin(seg, lc);
     const uint8_t *e = segSectionsEnd(seg, lc);
     if (!b || !e || e < b) return 0;
-    return static_cast<size_t>(e - b) / section::kStride;
+    const size_t stride = lc.sectionStride;
+    return static_cast<size_t>(e - b) / stride;
 }
 
 // Iterate every segment in the LayoutExecutable. fn: bool(seg).
@@ -634,9 +776,9 @@ inline void forEachSegment(const void *layoutExe, const LayoutConstants &lc, Fn 
 
 // Iterate atom pointers in a section. fn: bool(AtomPtr).
 template <typename Fn>
-inline void forEachAtomInSection(const void *sec, Fn fn) {
-    AtomPtr const *begin = sectionAtomsBegin(sec);
-    AtomPtr const *end   = sectionAtomsEnd(sec);
+inline void forEachAtomInSection(const void *sec, const LayoutConstants &lc, Fn fn) {
+    AtomPtr const *begin = sectionAtomsBegin(sec, lc);
+    AtomPtr const *end   = sectionAtomsEnd(sec, lc);
     if (!begin || !end) return;
     for (AtomPtr const *p = begin; p < end; ++p) {
         if (*p && !fn(*p)) return;
@@ -649,11 +791,12 @@ inline void forEachSection(const void *layoutExe, const LayoutConstants &lc, Fn 
     const uint8_t *begin = layoutSegmentsBegin(layoutExe, lc);
     const uint8_t *end   = layoutSegmentsEnd(layoutExe, lc);
     if (!begin || !end) return;
+    const size_t secStride = lc.sectionStride;
     for (const uint8_t *seg = begin; seg < end; seg += lc.segmentStride) {
         const uint8_t *sb = segSectionsBegin(seg, lc);
         const uint8_t *se = segSectionsEnd(seg, lc);
         if (!sb || !se || se < sb) continue;
-        for (const uint8_t *sec = sb; sec < se; sec += section::kStride) {
+        for (const uint8_t *sec = sb; sec < se; sec += secStride) {
             if (!fn(static_cast<const void *>(seg), static_cast<const void *>(sec)))
                 return;
         }
@@ -666,7 +809,7 @@ inline void forEachAtom(const void *layoutExe,
                         const LayoutConstants &lc, Fn fn) {
     forEachSection(layoutExe, lc, [&](const void *seg, const void *sec) {
         bool cont = true;
-        forEachAtomInSection(sec, [&](AtomPtr a) {
+        forEachAtomInSection(sec, lc, [&](AtomPtr a) {
             cont = fn(seg, sec, a);
             return cont;
         });
@@ -683,14 +826,15 @@ inline const void *findSection(const void *layoutExe,
     const uint8_t *segEnd   = layoutSegmentsEnd(layoutExe, lc);
     if (!segBegin || !segEnd) return nullptr;
 
+    const size_t secStride = lc.sectionStride;
     for (const uint8_t *seg = segBegin; seg < segEnd; seg += lc.segmentStride) {
         if (!segmentNameMatches(seg, segName, segNameLen)) continue;
 
         const uint8_t *secBegin = segSectionsBegin(seg, lc);
         const uint8_t *secEnd   = segSectionsEnd(seg, lc);
 
-        for (const uint8_t *sec = secBegin; sec < secEnd; sec += section::kStride) {
-            if (sectionNameIs(sec, sectName, sectNameLen))
+        for (const uint8_t *sec = secBegin; sec < secEnd; sec += secStride) {
+            if (sectionNameIs(sec, lc, sectName, sectNameLen))
                 return sec;
         }
     }
@@ -724,8 +868,8 @@ inline AtomPtr findAtomByName(const void *layoutExe,
     if (!name) return nullptr;
     AtomPtr hit = nullptr;
     forEachSection(layoutExe, lc, [&](const void *, const void *sec) {
-        AtomPtr const *ab = sectionAtomsBegin(sec);
-        AtomPtr const *ae = sectionAtomsEnd(sec);
+        AtomPtr const *ab = sectionAtomsBegin(sec, lc);
+        AtomPtr const *ae = sectionAtomsEnd(sec, lc);
         if (!ab || !ae) return true;
         for (AtomPtr const *p = ab; p < ae; ++p) {
             const char *n = atomName(*p);
@@ -863,6 +1007,25 @@ inline Span<uint64_t> dynamicFileLOHs(const void *file,
                               lc.dynamicFileFileLOHs + 8);
 }
 
+// 1266+ data-in-code vector. Element struct: { Atom* atom; u32 kind;
+// u32 length; u32 offset; } (24 bytes). Empty pre-1266.
+struct AtomAndDataInCode {
+    AtomPtr  atom;
+    uint32_t kind;
+    uint32_t length;
+    uint32_t offset;
+    uint32_t _pad;  // layout rounds to 24 bytes
+};
+static_assert(sizeof(AtomAndDataInCode) == 24, "");
+
+inline Span<AtomAndDataInCode>
+dynamicFileAtomAndDataInCode(const void *file, const LayoutConstants &lc) {
+    if (!file || !lc.valid || lc.dynamicFileAtomAndDataInCode == 0) return {};
+    return readSpan<AtomAndDataInCode>(file,
+                                       lc.dynamicFileAtomAndDataInCode,
+                                       lc.dynamicFileAtomAndDataInCode + 8);
+}
+
 // Pointer-element vector (std::vector<const AltFileInfo*>).
 inline Span<const void *> dynamicFileAltFileInfos(const void *file,
                                                   const LayoutConstants &lc) {
@@ -940,8 +1103,6 @@ inline const void *optionsOptimizations(OptionsPtr opts,
 inline bool layoutConstantsHaveDiagnosticPath(const LayoutConstants &lc) {
     return lc.valid
         && lc.layoutArch          != 0
-        && lc.layoutLoadCmdsBase  != 0
-        && lc.layoutLoadCmdsCount != 0
         && lc.layoutDylibMapping  != 0
         && lc.layoutEntryAtom     != 0;
 }
@@ -1039,6 +1200,44 @@ inline void forEachInputAtomFile(ConsolidatorPtr cons,
     }
 }
 
+// DynamicAtomFile span iteration. fn: bool(const T&). Empty on absence.
+template <typename Fn>
+inline void forEachLinkerOption(const void *file,
+                                const LayoutConstants &lc, Fn fn) {
+    auto s = dynamicFileLinkerOptions(file, lc);
+    for (size_t i = 0, n = s.size(); i < n; ++i) {
+        if (!fn(s[i])) return;
+    }
+}
+
+template <typename Fn>
+inline void forEachLargeAddend(const void *file,
+                               const LayoutConstants &lc, Fn fn) {
+    auto s = dynamicFileLargeAddends(file, lc);
+    for (size_t i = 0, n = s.size(); i < n; ++i) {
+        if (!fn(s[i])) return;
+    }
+}
+
+template <typename Fn>
+inline void forEachLOH(const void *file,
+                       const LayoutConstants &lc, Fn fn) {
+    auto s = dynamicFileLOHs(file, lc);
+    for (size_t i = 0, n = s.size(); i < n; ++i) {
+        if (!fn(s[i])) return;
+    }
+}
+
+template <typename Fn>
+inline void forEachAtomAndDataInCode(const void *file,
+                                     const LayoutConstants &lc, Fn fn) {
+    auto s = dynamicFileAtomAndDataInCode(file, lc);
+    for (size_t i = 0, n = s.size(); i < n; ++i) {
+        if (!fn(s[i])) return;
+    }
+}
+
+
 inline size_t consolidatorOutputDylibCount(ConsolidatorPtr cons,
                                            const LayoutConstants &lc) {
     auto begin = consolidatorOutputDylibsBegin(cons, lc);
@@ -1047,9 +1246,8 @@ inline size_t consolidatorOutputDylibCount(ConsolidatorPtr cons,
     return static_cast<size_t>(end - begin);
 }
 
-// Output dylib iteration. The vector holds DylibLoadInfo value elements
-// whose byte stride varies by version. Use outputDylibSlotAt() to pull
-// a slot; element count = byteSpan / dylibLoadInfoStride(v).
+// Raw byte span of the output dylib vector. Divide by dylibLoadInfoStride(v)
+// for element count.
 inline size_t consolidatorOutputDylibByteSpan(ConsolidatorPtr cons,
                                               const LayoutConstants &lc) {
     if (!cons || !lc.valid) return 0;
@@ -1096,6 +1294,23 @@ inline const char *outputDylibInstallName(ConsolidatorPtr cons,
     if (!dylib) return nullptr;
     const void *dfi = fileDylibFileInfo(dylib, lc.fileVtableDylibFileInfo);
     return dylibInstallName(dfi);
+}
+
+// fn: bool(slot, dylib, dylibFileInfo). Trailing args may be null.
+template <typename Fn>
+inline void forEachOutputDylib(ConsolidatorPtr cons,
+                               const LinkerVersion &v,
+                               const LayoutConstants &lc, Fn fn) {
+    const size_t count = consolidatorOutputDylibTypedCount(cons, v, lc);
+    for (size_t i = 0; i < count; ++i) {
+        const void *slot  = outputDylibSlotAt(cons, v, lc, i);
+        if (!slot) continue;
+        const void *dylib = dylibLoadInfoDylib(slot);
+        const void *dfi   = dylib
+            ? fileDylibFileInfo(dylib, lc.fileVtableDylibFileInfo)
+            : nullptr;
+        if (!fn(slot, dylib, dfi)) return;
+    }
 }
 
 // Structural sanity check for a Consolidator. Rejects null, invalid or

@@ -47,6 +47,7 @@ struct LinkerVersion {
 };
 
 namespace version {
+    inline constexpr LinkerVersion Prime_1053 = {Family::Prime, 1053, 12, 0};
     inline constexpr LinkerVersion Prime_1115 = {Family::Prime, 1115, 7, 3};
     inline constexpr LinkerVersion Prime_1167 = {Family::Prime, 1167, 5, 0};
     inline constexpr LinkerVersion Prime_1221 = {Family::Prime, 1221, 4, 0};
@@ -56,7 +57,8 @@ namespace version {
 }
 
 inline bool isKnownVersion(const LinkerVersion &v) {
-    return v == version::Prime_1115
+    return v == version::Prime_1053
+        || v == version::Prime_1115
         || v == version::Prime_1167
         || v == version::Prime_1221
         || v == version::Prime_1230

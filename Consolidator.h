@@ -89,6 +89,15 @@ inline bool dylibLoadInfoIsDeadStrippable(const void *slot){ return hasAttr(dyli
 // Per-version Consolidator vector offsets.
 namespace consolidator_offsets {
 
+    // ld-1053.12. Offsets unrelated to any later tier.
+    struct Prime_1053 {
+        static constexpr size_t kInputAtomFilesBegin = 0x488;
+        static constexpr size_t kInputAtomFilesEnd   = 0x490;
+        static constexpr size_t kOutputDylibsBegin   = 0x6F0;
+        static constexpr size_t kOutputDylibsEnd     = 0x6F8;
+        static constexpr size_t kOutputDylibsCap     = 0x700;
+    };
+
     struct Prime_1115 {
         static constexpr size_t kInputAtomFilesBegin = 0x4A8;
         static constexpr size_t kInputAtomFilesEnd   = 0x4B0;
@@ -106,7 +115,7 @@ namespace consolidator_offsets {
         static constexpr size_t kOutputDylibsCap     = 0x800;
     };
 
-    // 1167.5 -- inputAtomFiles matches 1221 but outputDylibs differs.
+    // ld-1167.5: inputAtomFiles match 1221 but outputDylibs differ.
     struct Prime_1167 {
         static constexpr size_t kInputAtomFilesBegin = 0x4B8;
         static constexpr size_t kInputAtomFilesEnd   = 0x4C0;
